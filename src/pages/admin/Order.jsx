@@ -25,12 +25,11 @@ const Order = () => {
     const [isLoadingOrders, setIsLoadingOrders] = useState(false);
     const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
 
-    // 🔍 Debug: log orders whenever they change
-    useEffect(() => {
-        console.log('[Order] Current orders state:', orders);
-    }, [orders]);
+    const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
+    const MASTER_URL = import.meta.env.VITE_MASTER_URL;
+    const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
 
-    // Professional Date Formatter (e.g., 25-Feb-2026)
+    // Date formatter (e.g., 25-Feb-2026)
     const formatDisplayDate = (dateStr) => {
         if (!dateStr || dateStr === '-') return '-';
         try {
@@ -41,7 +40,7 @@ const Order = () => {
             const month = months[date.getMonth()];
             const year = date.getFullYear();
             return `${day}-${month}-${year}`;
-        } catch (e) {
+        } catch {
             return dateStr;
         }
     };
@@ -53,226 +52,166 @@ const Order = () => {
         fetchOrders();
     }, []);
 
+    // ----- Fetch orders from the ORDER sheet -----
     const fetchOrders = async () => {
+        setIsLoadingOrders(true);
         try {
-            setIsLoadingOrders(true);
-            const ORDER_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-            const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
-
-            if (!ORDER_URL) {
-                showToast('Error', 'ORDER_URL is not configured');
+            if (!API_URL) {
+                showToast('Error', 'API URL not configured');
                 return;
             }
 
-            const url = new URL(ORDER_URL);
+            const url = new URL(API_URL);
             url.searchParams.set('sheet', 'ORDER');
             url.searchParams.set('mode', 'table');
             if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
 
-            console.log('[Order] Fetching from:', url.toString());
+            const response = await fetch(url.toString());
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-            const response = await fetch(url.toString(), { redirect: 'follow' });
-            if (!response.ok) {
-                throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
-            }
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || 'Unknown error');
 
-            const text = await response.text();
-            console.log('[Order] Raw API response:', text);
+            let dataArray = result.data;
+            if (!Array.isArray(dataArray)) dataArray = [];
 
-            let result;
-            try {
-                result = JSON.parse(text);
-            } catch (e) {
-                console.error('[Order] Failed to parse JSON:', text);
-                showToast('Error', 'Invalid response from server');
-                return;
-            }
-
-            let dataArray = null;
-            if (Array.isArray(result)) {
-                dataArray = result;
-            } else if (result.success && Array.isArray(result.data)) {
-                dataArray = result.data;
-            } else if (result.data && Array.isArray(result.data)) {
-                dataArray = result.data;
-            } else if (result.rows && Array.isArray(result.rows)) {
-                dataArray = result.rows;
-            }
-
-            if (!dataArray || dataArray.length === 0) {
-                console.warn('[Order] No data found or unexpected format');
+            // If dataArray is empty, keep empty list
+            if (dataArray.length === 0) {
                 setOrders([]);
                 return;
             }
 
-            // Helper to get value from object regardless of key casing/spaces
-            const getVal = (obj, ...possibleKeys) => {
-                const keys = Object.keys(obj);
-                for (const pKey of possibleKeys) {
-                    if (obj[pKey] !== undefined) return obj[pKey];
-                    const normalizedPKey = pKey.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    const foundKey = keys.find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedPKey);
-                    if (foundKey) return obj[foundKey];
-                }
-                return undefined;
-            };
+            // Determine if response is array of objects or array of arrays
+            const isArrayData = Array.isArray(dataArray[0]);
 
-            const mappedOrders = dataArray
-                .filter((item, idx) => {
-                    // Skip header row if it looks like headers
-                    if (idx === 0 && Array.isArray(item)) {
-                        const firstCell = String(item[0]).toLowerCase();
-                        if (firstCell.includes('date') || firstCell.includes('timestamp') || firstCell.includes('order')) return false;
-                    }
-                    return true;
-                })
-                .map(item => {
-                    if (Array.isArray(item)) {
-                        return {
-                            orderNumber: item[2] || '-',
-                            orderDate: item[1] || '-',
-                            clientName: item[3] || '-',
-                            godownName: item[4] || '-',
-                            itemName: item[5] || '-',
-                            qty: item[6] || '0',
-                            rate: item[7] || '0',
-                            currentStock: item[8] || '-',
-                            intransitQty: item[9] || '-'
-                        };
-                    } else {
-                        return {
-                            orderNumber: getVal(item, 'orderNumber', 'orderNo', 'Order No', 'Order Number') || '-',
-                            orderDate: getVal(item, 'orderDate', 'Date', 'Order Date') || '-',
-                            clientName: getVal(item, 'clientName', 'customer', 'Customer Name', 'Client Name') || '-',
-                            godownName: getVal(item, 'godownName', 'godown', 'Godown Name') || '-',
-                            itemName: getVal(item, 'itemName', 'product', 'Product Name', 'Item Name') || '-',
-                            qty: getVal(item, 'qty', 'orderQty', 'Order Qty', 'Quantity') || '0',
-                            rate: getVal(item, 'rate', 'Rate') || '0',
-                            currentStock: getVal(item, 'currentStock', 'Stock', 'Current Stock') || '-',
-                            intransitQty: getVal(item, 'intransitQty', 'In Transit', 'Intransit Qty') || '-'
-                        };
-                    }
-                });
+            // The image shows data starts at Row 7. 
+            // If Apps Script returns data starting from Row 2 (slice(1)), 
+            // then index 5 in the returned array corresponds to Row 7.
+            const dataToMap = dataArray.slice(5);
 
-            console.log('[Order] Final mapped orders:', mappedOrders);
+            let mappedOrders;
+            if (isArrayData) {
+                // Fallback for array-of-arrays (adjust indices to your sheet)
+                mappedOrders = dataToMap.map(item => ({
+                    orderNumber: item[1] || '-',
+                    orderDate:   item[2] || '-',
+                    clientName:  item[3] || '-',
+                    godownName:  item[4] || '-',
+                    itemName:    item[5] || '-',
+                    rate:        item[6] || '0',
+                    qty:         item[7] || '0',
+                    currentStock: item[8] || '-',
+                    intransitQty: item[9] || '-'
+                }));
+            } else {
+                // Use the clean object keys returned by the API
+                mappedOrders = dataToMap.map(item => ({
+                    orderNumber: item.orderNumber || '-',
+                    orderDate:   item.orderDate   || '-',
+                    clientName:  item.clientName  || '-',
+                    godownName:  item.godownName  || '-',
+                    itemName:    item.itemName    || '-',
+                    rate:        item.rate        || '0',
+                    qty:         item.qty         || '0',
+                    currentStock: item.currentStock || '-',
+                    intransitQty: item.intransitQty || '-'
+                }));
+            }
+
             setOrders(mappedOrders);
         } catch (error) {
-            console.error('Error fetching orders:', error);
-            showToast('Error', `Failed to load orders: ${error.message}`);
+            console.error('fetchOrders error:', error);
+            showToast('Error', error.message);
         } finally {
             setIsLoadingOrders(false);
         }
     };
 
+    // ----- Fetch master data (products, clients, godowns) -----
     const fetchProducts = async () => {
+        if (!MASTER_URL) return;
         try {
-            const MASTER_URL = import.meta.env.VITE_MASTER_URL;
-            if (!MASTER_URL) return;
-
-            const response = await fetch(`${MASTER_URL}?sheet=Products`);
-            const result = await response.json();
-
-            if (result.success && result.data) {
-                setItemNames(result.data);
-            }
+            const res = await fetch(`${MASTER_URL}?sheet=Products`);
+            const json = await res.json();
+            if (json.success && json.data) setItemNames(json.data);
         } catch (error) {
-            console.error('Error fetching products:', error);
+            console.error('fetchProducts error:', error);
         }
     };
 
     const fetchClients = async () => {
+        if (!MASTER_URL) return;
         try {
-            const MASTER_URL = import.meta.env.VITE_MASTER_URL;
-            if (!MASTER_URL) return;
-
-            const response = await fetch(`${MASTER_URL}?sheet=Sales Vendor`);
-            const result = await response.json();
-
-            if (result.success && result.data) {
-                setClients(result.data);
-            }
+            const res = await fetch(`${MASTER_URL}?sheet=Sales Vendor`);
+            const json = await res.json();
+            if (json.success && json.data) setClients(json.data);
         } catch (error) {
-            console.error('Error fetching clients:', error);
+            console.error('fetchClients error:', error);
         }
     };
 
     const fetchGodowns = async () => {
+        if (!MASTER_URL) return;
         try {
-            const MASTER_URL = import.meta.env.VITE_MASTER_URL;
-            if (!MASTER_URL) return;
-
-            const response = await fetch(`${MASTER_URL}?sheet=Products&col=4`);
-            const result = await response.json();
-
-            if (result.success && result.data) {
-                setGodowns(result.data);
-            }
+            const res = await fetch(`${MASTER_URL}?sheet=Products&col=4`);
+            const json = await res.json();
+            if (json.success && json.data) setGodowns(json.data);
         } catch (error) {
-            console.error('Error fetching godowns:', error);
+            console.error('fetchGodowns error:', error);
         }
     };
 
-    // Use master lists from sheets for filters
-    const filterClients = [...clients].sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }));
-    const filterGodowns = [...godowns].sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }));
+    // ----- Filtering -----
+    const filterClients = [...clients].sort((a, b) => String(a).localeCompare(b));
+    const filterGodowns = [...godowns].sort((a, b) => String(a).localeCompare(b));
 
-    // 🔍 Filter logic – log to verify
     const filteredOrders = orders.filter(order => {
         const matchesSearch = Object.values(order).some(val =>
-            val !== null && val !== undefined &&
             String(val).toLowerCase().includes(searchTerm.toLowerCase())
         );
-        const matchesClient = clientFilter === '' || order.clientName === clientFilter;
-        const matchesGodown = godownFilter === '' || order.godownName === godownFilter;
+        const matchesClient = !clientFilter || order.clientName === clientFilter;
+        const matchesGodown = !godownFilter || order.godownName === godownFilter;
         return matchesSearch && matchesClient && matchesGodown;
     });
 
-    // 🔍 Log filtered orders
-    useEffect(() => {
-        console.log('[Order] Filtered orders:', filteredOrders);
-        console.log('[Order] Filters:', { searchTerm, clientFilter, godownFilter });
-    }, [filteredOrders, searchTerm, clientFilter, godownFilter]);
-
+    // ----- Form handlers -----
     const handleAddItem = () => {
-        setFormData({
-            ...formData,
-            items: [...formData.items, { itemName: '', rate: '', qty: '' }]
-        });
+        setFormData(prev => ({
+            ...prev,
+            items: [...prev.items, { itemName: '', rate: '', qty: '' }]
+        }));
     };
 
     const handleRemoveItem = (index) => {
-        const newItems = formData.items.filter((_, i) => i !== index);
-        setFormData({ ...formData, items: newItems });
+        setFormData(prev => ({
+            ...prev,
+            items: prev.items.filter((_, i) => i !== index)
+        }));
     };
 
     const handleItemChange = (index, field, value) => {
-        const newItems = [...formData.items];
-        newItems[index][field] = value;
-        setFormData({ ...formData, items: newItems });
+        setFormData(prev => {
+            const newItems = [...prev.items];
+            newItems[index][field] = value;
+            return { ...prev, items: newItems };
+        });
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (isSubmitting) return;
 
+        setIsSubmitting(true);
         try {
-            setIsSubmitting(true);
-            const ORDER_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-            const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
-
-            if (!ORDER_URL || !SHEET_ID) {
-                showToast("Error", "Missing Sheet URL or ID in environment variables");
-                setIsSubmitting(false);
+            if (!API_URL || !SHEET_ID) {
+                showToast('Error', 'Missing API URL or Sheet ID');
                 return;
             }
 
-            const now = new Date().toISOString();
-
             const payload = {
-                sheet: "ORDER",
+                sheet: 'ORDER',
                 sheetId: SHEET_ID,
                 rows: formData.items.map(item => ({
-                    timestamp: now,
                     orderDate: formData.orderDate,
                     clientName: formData.clientName,
                     godownName: formData.godownName,
@@ -282,15 +221,15 @@ const Order = () => {
                 }))
             };
 
-            await fetch(ORDER_URL, {
+            // Use normal fetch (avoid 'no-cors' to see errors)
+            await fetch(API_URL, {
                 method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
 
+            // Success overlay and reset
             setShowSuccessOverlay(true);
-
             setFormData({
                 orderDate: new Date().toISOString().split('T')[0],
                 clientName: '',
@@ -299,22 +238,23 @@ const Order = () => {
             });
             setIsModalOpen(false);
 
+            // Refresh orders after a short delay
             setTimeout(() => {
                 fetchOrders();
                 setShowSuccessOverlay(false);
             }, 2500);
-
         } catch (error) {
-            console.error('Submission error:', error);
-            showToast("Error", "Failed to submit. Check console or network.");
+            console.error('Submit error:', error);
+            showToast('Error', 'Submission failed');
         } finally {
             setIsSubmitting(false);
         }
     };
 
+    // ----- Render -----
     return (
         <div className="p-3 sm:p-6 lg:p-8">
-            {/* Header Row with Title, Filters, and Actions */}
+            {/* Header */}
             <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
                 <h1 className="text-xl font-bold text-gray-800 mr-auto">Orders</h1>
 
@@ -323,7 +263,7 @@ const Order = () => {
                     placeholder="Search..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-40 lg:w-48 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-800 focus:border-transparent outline-none text-sm"
+                    className="w-40 lg:w-48 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-800 outline-none text-sm"
                 />
                 <SearchableDropdown
                     value={clientFilter}
@@ -342,144 +282,123 @@ const Order = () => {
 
                 <button
                     onClick={() => setIsModalOpen(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-800 text-white rounded-lg hover:bg-red-900 transition-colors font-bold text-sm shadow-md"
+                    className="flex items-center gap-2 px-4 py-2 bg-red-800 text-white rounded-lg hover:bg-red-900 shadow-md font-bold text-sm"
                 >
                     <Plus size={18} />
                     Add Order
                 </button>
             </div>
 
+            {/* Loading overlay */}
             {isLoadingOrders && (
-                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/20 backdrop-blur-[2px]">
-                    <div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4 border border-gray-100">
-                        <div className="relative">
-                            <div className="h-16 w-16 rounded-full border-4 border-gray-100 border-t-red-800 animate-spin"></div>
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="h-8 w-8 rounded-full border-4 border-gray-100 border-b-red-800 animate-spin-slow"></div>
-                            </div>
-                        </div>
-                        <div className="flex flex-col items-center">
-                            <p className="text-sm font-black text-gray-800 uppercase tracking-[0.2em]">Processing</p>
-                            <p className="text-[10px] text-gray-400 font-bold uppercase mt-1">Retrieving Order Data</p>
-                        </div>
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 backdrop-blur-sm">
+                    <div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4">
+                        <div className="h-16 w-16 rounded-full border-4 border-gray-100 border-t-red-800 animate-spin" />
+                        <p className="text-sm font-bold text-gray-800">Loading Orders...</p>
                     </div>
                 </div>
             )}
 
-            {/* Professional Success Overlay */}
+            {/* Success overlay */}
             {showSuccessOverlay && (
-                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/20 backdrop-blur-[2px] transition-all duration-300">
-                    <div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4 border border-gray-100 animate-fade-in-up">
-                        <div className="h-20 w-20 bg-green-50 rounded-full flex items-center justify-center shadow-inner relative overflow-hidden">
-                            <div className="absolute inset-0 border-4 border-green-100 rounded-full animate-ping opacity-20"></div>
-                            <svg className="w-10 h-10 text-green-600 animate-[bounce_1.5s_ease-in-out_infinite]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 backdrop-blur-sm">
+                    <div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4 animate-fade-in-up">
+                        <div className="h-20 w-20 bg-green-50 rounded-full flex items-center justify-center">
+                            <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7" />
                             </svg>
                         </div>
-                        <div className="flex flex-col items-center">
-                            <p className="text-base font-black text-green-600 uppercase tracking-[0.2em] mb-1">Success</p>
-                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider">Order Saved Successfully</p>
-                        </div>
+                        <p className="text-base font-black text-green-600">Order Saved Successfully</p>
                     </div>
                 </div>
             )}
 
-            {/* Responsive Data List */}
+            {/* Data table / cards */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                {/* Table View (Desktop) */}
-                <div className="hidden md:block overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 max-h-[460px] overflow-y-auto">
+                {/* Desktop table */}
+                <div className="hidden md:block overflow-x-auto max-h-[460px] overflow-y-auto">
                     <table className="w-full text-left border-collapse">
-                        <thead>
-                            <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10 shadow-sm">
+                        <thead className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10">
+                            <tr>
                                 <th className="px-4 py-3">Order Number</th>
                                 <th className="px-4 py-3">Order Date</th>
-                                <th className="px-4 py-3">Client Name</th>
+                                <th className="px-4 py-3">Client</th>
                                 <th className="px-4 py-3">Godown</th>
-                                <th className="px-4 py-3">Item Name</th>
+                                <th className="px-4 py-3">Item</th>
                                 <th className="px-4 py-3">Rate</th>
-                                <th className="px-4 py-3 text-right">Order Qty</th>
+                                <th className="px-4 py-3 text-right">Qty</th>
                                 <th className="px-4 py-3">Current Stock</th>
-                                <th className="px-4 py-3">Intransit Qty</th>
+                                <th className="px-4 py-3">Intransit</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-200 text-sm">
-                            {[...filteredOrders].reverse().map((order, idx) => (
-                                <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                                    <td className="px-4 py-3 font-bold text-red-800">{order.orderNumber}</td>
-                                    <td className="px-4 py-3 text-gray-600 text-xs font-medium">{formatDisplayDate(order.orderDate)}</td>
-                                    <td className="px-4 py-3 text-gray-800 font-semibold">{order.clientName}</td>
-                                    <td className="px-4 py-3 text-gray-600">{order.godownName}</td>
-                                    <td className="px-4 py-3 text-gray-600">{order.itemName}</td>
-                                    <td className="px-4 py-3 text-gray-600 font-medium">₹{order.rate}</td>
-                                    <td className="px-4 py-3 text-right text-red-800 font-black">{order.qty}</td>
-                                    <td className="px-4 py-3 text-gray-600 text-xs">{order.currentStock}</td>
-                                    <td className="px-4 py-3 text-gray-600 text-xs">{order.intransitQty}</td>
-                                </tr>
-                            ))}
-                            {filteredOrders.length === 0 && !isLoadingOrders && (
+                        <tbody className="divide-y divide-gray-200">
+                            {filteredOrders.length === 0 ? (
                                 <tr>
-                                    <td colSpan="9" className="px-4 py-8 text-center text-gray-500 italic">No orders found matching your filters.</td>
+                                    <td colSpan="9" className="px-4 py-8 text-center text-gray-500 italic">
+                                        No orders found.
+                                    </td>
                                 </tr>
+                            ) : (
+                                filteredOrders.map((order, idx) => (
+                                    <tr key={idx} className="hover:bg-gray-50">
+                                        <td className="px-4 py-3 font-bold text-red-800">{order.orderNumber}</td>
+                                        <td className="px-4 py-3 text-gray-600 text-xs">{formatDisplayDate(order.orderDate)}</td>
+                                        <td className="px-4 py-3 font-semibold">{order.clientName}</td>
+                                        <td className="px-4 py-3 text-gray-600">{order.godownName}</td>
+                                        <td className="px-4 py-3 text-gray-600">{order.itemName}</td>
+                                        <td className="px-4 py-3 font-medium">₹{order.rate}</td>
+                                        <td className="px-4 py-3 text-right font-black text-red-800">{order.qty}</td>
+                                        <td className="px-4 py-3 text-gray-600 text-xs">{order.currentStock}</td>
+                                        <td className="px-4 py-3 text-gray-600 text-xs">{order.intransitQty}</td>
+                                    </tr>
+                                ))
                             )}
                         </tbody>
                     </table>
                 </div>
 
-                {/* Card View (Mobile) */}
+                {/* Mobile cards */}
                 <div className="md:hidden divide-y divide-gray-200">
-                    {[...filteredOrders].reverse().map((order, idx) => (
-                        <div key={idx} className="p-4 space-y-3 bg-white">
-                            <div className="flex justify-between items-start">
-                                <div>
-                                    <h4 className="text-sm font-bold text-gray-900 mt-0.5">{order.clientName}</h4>
+                    {filteredOrders.length === 0 ? (
+                        <div className="p-8 text-center text-gray-500 italic">No orders found.</div>
+                    ) : (
+                        filteredOrders.map((order, idx) => (
+                            <div key={idx} className="p-4 space-y-2">
+                                <div className="flex justify-between items-start">
+                                    <h4 className="font-bold text-gray-900">{order.clientName}</h4>
+                                    <span className="px-2 py-0.5 bg-red-50 text-red-800 rounded text-[10px] font-bold">
+                                        {order.orderNumber}
+                                    </span>
                                 </div>
-                                <span className="px-2 py-0.5 bg-red-50 text-red-800 rounded text-[10px] font-bold uppercase ring-1 ring-red-100">
-                                    {order.orderNumber}
-                                </span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4 text-[11px]">
-                                <div>
-                                    <p className="text-gray-400 mb-0.5 uppercase text-[9px] font-bold tracking-wider">Godown</p>
-                                    <p className="font-medium text-gray-700">{order.godownName}</p>
-                                </div>
-                                <div>
-                                    <p className="text-gray-400 mb-0.5 uppercase text-[9px] font-bold tracking-wider">Order Date</p>
-                                    <p className="font-medium text-gray-700">{formatDisplayDate(order.orderDate)}</p>
-                                </div>
-                                <div>
-                                    <p className="text-gray-400 mb-0.5 uppercase text-[9px] font-bold tracking-wider">Item Details</p>
-                                    <p className="font-bold text-gray-900">{order.itemName}</p>
-                                </div>
-                                <div className="flex gap-4">
+                                <div className="grid grid-cols-2 gap-2 text-xs">
                                     <div>
-                                        <p className="text-gray-400 mb-0.5 uppercase text-[9px] font-bold tracking-wider">Rate</p>
-                                        <p className="font-bold text-gray-900">₹{order.rate}</p>
+                                        <p className="text-gray-400 text-[9px] uppercase">Godown</p>
+                                        <p className="font-medium">{order.godownName}</p>
                                     </div>
                                     <div>
-                                        <p className="text-gray-400 mb-0.5 uppercase text-[9px] font-bold tracking-wider">Qty</p>
+                                        <p className="text-gray-400 text-[9px] uppercase">Date</p>
+                                        <p className="font-medium">{formatDisplayDate(order.orderDate)}</p>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <p className="text-gray-400 text-[9px] uppercase">Item</p>
+                                        <p className="font-bold">{order.itemName}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-400 text-[9px] uppercase">Rate</p>
+                                        <p className="font-bold">₹{order.rate}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-400 text-[9px] uppercase">Qty</p>
                                         <p className="font-bold text-red-800">{order.qty}</p>
                                     </div>
                                 </div>
-                                <div className="grid grid-cols-2 gap-4 mt-2 pt-2 border-t border-gray-50 text-[10px]">
-                                    <div>
-                                        <p className="text-gray-400 mb-0.5 uppercase text-[8px] font-bold">Current Stock</p>
-                                        <p className="font-medium text-gray-700">{order.currentStock}</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-gray-400 mb-0.5 uppercase text-[8px] font-bold">Intransit Qty</p>
-                                        <p className="font-medium text-gray-700">{order.intransitQty}</p>
-                                    </div>
-                                </div>
                             </div>
-                        </div>
-                    ))}
-                    {filteredOrders.length === 0 && !isLoadingOrders && (
-                        <div className="p-8 text-center text-gray-500 italic text-sm">No orders found matching your filters.</div>
+                        ))
                     )}
                 </div>
             </div>
 
-            {/* Modal (unchanged) */}
+            {/* Add Order Modal */}
             {isModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-4 bg-black/50 backdrop-blur-sm">
                     <div className="bg-white sm:rounded-2xl shadow-2xl w-full h-full sm:h-[90vh] sm:max-w-4xl flex flex-col overflow-hidden">
@@ -623,28 +542,26 @@ const Order = () => {
                     </div>
                 </div>
             )}
+
+            {/* Embedded Styles (safe inside component) */}
+            <style>{`
+                @keyframes spin-slow {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(-360deg); }
+                }
+                .animate-spin-slow {
+                    animation: spin-slow 3s linear infinite;
+                }
+                @keyframes fade-in-up {
+                    from { opacity: 0; transform: translateY(15px) scale(0.95); }
+                    to { opacity: 1; transform: translateY(0) scale(1); }
+                }
+                .animate-fade-in-up {
+                    animation: fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+                }
+            `}</style>
         </div>
     );
 };
 
 export default Order;
-
-// Custom Animations for professional feel
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes spin-slow {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(-360deg); }
-  }
-  .animate-spin-slow {
-    animation: spin-slow 3s linear infinite;
-  }
-  @keyframes fade-in-up {
-    from { opacity: 0; transform: translateY(15px) scale(0.95); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-  .animate-fade-in-up {
-    animation: fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
-`;
-document.head.appendChild(style);
