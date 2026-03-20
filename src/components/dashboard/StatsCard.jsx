@@ -1,7 +1,7 @@
 import React from 'react';
 import { TrendingUp } from 'lucide-react';
 
-const StatsCard = ({ title, value, icon: Icon = TrendingUp, color = 'blue', trend }) => {
+const StatsCard = ({ title, value, icon: Icon = TrendingUp, color = 'green', trend }) => {
   const colorClasses = {
     blue: {
       border: 'border-blue-200',
@@ -36,12 +36,12 @@ const StatsCard = ({ title, value, icon: Icon = TrendingUp, color = 'blue', tren
   };
 
   const currentColor = colorClasses[color] || colorClasses.blue;
-  
+
   return (
-    <div className={`bg-gradient-to-br ${currentColor.gradient} rounded-xl p-4 sm:p-6 border ${currentColor.border} shadow-sm hover:shadow-md transition-all duration-200 group`}>
+    <div className={`bg-gradient-to-br ${currentColor.gradient} rounded p-4 sm:p-6 border ${currentColor.border} shadow-sm hover:shadow-md transition-all duration-200 group`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center min-w-0 flex-1">
-          <div className={`p-2 sm:p-3 rounded-full ${currentColor.iconBg} mr-3 sm:mr-4 group-hover:scale-110 transition-transform duration-200`}>
+          <div className={`p-2 sm:p-3 rounded ${currentColor.iconBg} mr-3 sm:mr-4 group-hover:scale-110 transition-transform duration-200`}>
             <Icon className={`w-4 h-4 sm:w-6 sm:h-6 ${currentColor.iconText}`} />
           </div>
           <div className="min-w-0 flex-1">
@@ -50,7 +50,7 @@ const StatsCard = ({ title, value, icon: Icon = TrendingUp, color = 'blue', tren
           </div>
         </div>
       </div>
-      
+
       {trend && (
         <div className="mt-3 sm:mt-4 flex items-center">
           <span className={`flex items-center text-xs sm:text-sm font-medium ${trend.positive ? 'text-green-600' : 'text-red-600'}`}>
@@ -66,7 +66,7 @@ const StatsCard = ({ title, value, icon: Icon = TrendingUp, color = 'blue', tren
 // Add prop validation
 StatsCard.defaultProps = {
   icon: TrendingUp,
-  color: 'blue',
+  color: 'green',
   trend: null,
 };
 

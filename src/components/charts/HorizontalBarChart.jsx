@@ -28,9 +28,9 @@ const HorizontalBarChart = ({ data, labels, colors, maxValue }) => {
                 </div>
 
                 {/* Bar Container */}
-                <div className="flex-1 bg-gray-200 rounded-full h-5 md:h-6 overflow-hidden">
+                <div className="flex-1 bg-gray-200 rounded h-5 md:h-6 overflow-hidden">
                   <div
-                    className="h-full rounded-full transition-all duration-700 ease-out shadow-sm"
+                    className="h-full rounded transition-all duration-700 ease-out shadow-sm"
                     style={{
                       width: `${Math.min((value / maxValue) * 100, 100)}%`,
                       backgroundColor: colors[index % colors.length],

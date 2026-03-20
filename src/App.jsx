@@ -8,6 +8,9 @@ import DispatchPlanning from "./pages/admin/DispatchPlanning";
 import InformToParty from "./pages/admin/InformToParty";
 import DispatchComplete from "./pages/admin/DispatchComplete";
 import AfterDispatchInformToParty from "./pages/admin/AfterDispatchInformToParty";
+import SkipDelivered from "./pages/admin/SkipDelivered";
+import Godown from "./pages/admin/Godown";
+import PcReport from "./pages/admin/PcReport";
 import Settings from "./pages/admin/Settings";
 
 import AdminLayout from "./layouts/AdminLayout";
@@ -17,7 +20,8 @@ function App() {
 
   // Helper to check if user has access to a specific page name
   const hasAccess = (pageName) => {
-    return user?.pageAccess?.includes(pageName);
+    // Case-insensitive check for strict adherence to pageAccess array
+    return user?.pageAccess?.some(p => p.toLowerCase().trim() === pageName.toLowerCase().trim());
   };
 
   // Helper to find the first allowed admin route
@@ -25,10 +29,13 @@ function App() {
     const adminRoutes = [
       { name: "Dashboard", path: "/admin/dashboard" },
       { name: "Order", path: "/admin/order" },
-      { name: "Disp Plan", path: "/admin/dispatch-planning" },
-      { name: "Notify Party", path: "/admin/notify-party" },
-      { name: "Disp Done", path: "/admin/dispatch-done" },
-      { name: "Post-Disp Notify", path: "/admin/post-dispatch-notify" },
+      { name: "Dispatch Planning", path: "/admin/dispatch-planning" },
+      { name: "Inform to Party Before Dispatch", path: "/admin/notify-party" },
+      { name: "Dispatch Completed", path: "/admin/dispatch-done" },
+      { name: "Inform to Party After Dispatch", path: "/admin/post-dispatch-notify" },
+      { name: "Skip Delivered", path: "/admin/skip-delivered" },
+      { name: "Godown", path: "/admin/godown" },
+      { name: "PC Report", path: "/admin/pc-report" },
       { name: "Settings", path: "/admin/settings" },
     ];
 
@@ -54,7 +61,7 @@ function App() {
           user ? (
             <Navigate
               to={
-                user.role === "admin" ? getFirstAllowedAdminRoute() : "/user/dashboard"
+                user.role === "admin" || user.role === "manager" ? getFirstAllowedAdminRoute() : "/user/dashboard"
               }
             />
           ) : (
@@ -80,26 +87,44 @@ function App() {
         } />
 
         <Route path="dispatch-planning" element={
-          <ProtectedRoute pageName="Disp Plan">
+          <ProtectedRoute pageName="Dispatch Planning">
             <DispatchPlanning />
           </ProtectedRoute>
         } />
 
         <Route path="notify-party" element={
-          <ProtectedRoute pageName="Notify Party">
+          <ProtectedRoute pageName="Inform to Party Before Dispatch">
             <InformToParty />
           </ProtectedRoute>
         } />
 
         <Route path="dispatch-done" element={
-          <ProtectedRoute pageName="Disp Done">
+          <ProtectedRoute pageName="Dispatch Completed">
             <DispatchComplete />
           </ProtectedRoute>
         } />
 
         <Route path="post-dispatch-notify" element={
-          <ProtectedRoute pageName="Post-Disp Notify">
+          <ProtectedRoute pageName="Inform to Party After Dispatch">
             <AfterDispatchInformToParty />
+          </ProtectedRoute>
+        } />
+
+        <Route path="skip-delivered" element={
+          <ProtectedRoute pageName="Skip Delivered">
+            <SkipDelivered />
+          </ProtectedRoute>
+        } />
+
+        <Route path="godown" element={
+          <ProtectedRoute pageName="Godown">
+            <Godown />
+          </ProtectedRoute>
+        } />
+
+        <Route path="pc-report" element={
+          <ProtectedRoute pageName="PC Report">
+            <PcReport />
           </ProtectedRoute>
         } />
 
@@ -122,7 +147,7 @@ function App() {
           user ? (
             <Navigate
               to={
-                user.role === "admin" ? getFirstAllowedAdminRoute() : "/user/dashboard"
+                user.role === "admin" || user.role === "manager" ? getFirstAllowedAdminRoute() : "/user/dashboard"
               }
             />
           ) : (

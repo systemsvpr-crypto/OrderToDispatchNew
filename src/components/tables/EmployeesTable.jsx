@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 
 const EmployeesTable = ({ employees, isCompact = false }) => {
   return (
-    <div className={`bg-white rounded-lg border border-gray-200 overflow-hidden ${isCompact ? 'max-h-96' : ''}`}>
+    <div className={`bg-white rounded border border-gray-200 overflow-hidden ${isCompact ? 'max-h-96' : ''}`}>
       <div className="overflow-x-auto">
         <div className={`min-w-full ${isCompact ? 'max-h-96 overflow-y-auto' : ''}`}>
           <table className="min-w-full divide-y divide-gray-200">
@@ -44,10 +44,10 @@ const EmployeesTable = ({ employees, isCompact = false }) => {
                   <td className="px-3 py-2 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className="flex-shrink-0 h-8 w-8">
-                        <img 
-                          className="h-8 w-8 rounded-full object-cover" 
-                          src={employee.image} 
-                          alt={employee.name} 
+                        <img
+                          className="h-8 w-8 rounded object-cover"
+                          src={employee.image}
+                          alt={employee.name}
                         />
                       </div>
                       <div className="ml-2">
@@ -67,9 +67,9 @@ const EmployeesTable = ({ employees, isCompact = false }) => {
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     <div className="flex items-center">
-                      <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
-                        <div 
-                          className="h-2 rounded-full bg-blue-600"
+                      <div className="w-16 bg-gray-200 rounded h-2 mr-2">
+                        <div
+                          className="h-2 rounded bg-primary"
                           style={{ width: `${employee.actualWorkDone}%` }}
                         ></div>
                       </div>
@@ -78,9 +78,9 @@ const EmployeesTable = ({ employees, isCompact = false }) => {
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     <div className="flex items-center">
-                      <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
-                        <div 
-                          className="h-2 rounded-full bg-green-600"
+                      <div className="w-16 bg-gray-200 rounded h-2 mr-2">
+                        <div
+                          className="h-2 rounded bg-primary"
                           style={{ width: `${employee.workDoneOnTime}%` }}
                         ></div>
                       </div>
@@ -89,9 +89,9 @@ const EmployeesTable = ({ employees, isCompact = false }) => {
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     <div className="flex items-center">
-                      <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
-                        <div 
-                          className="h-2 rounded-full bg-purple-600"
+                      <div className="w-16 bg-gray-200 rounded h-2 mr-2">
+                        <div
+                          className="h-2 rounded bg-primary"
                           style={{ width: `${employee.totalWorkDone}%` }}
                         ></div>
                       </div>
@@ -99,11 +99,10 @@ const EmployeesTable = ({ employees, isCompact = false }) => {
                     </div>
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                      employee.weekPending > 3 ? 'bg-red-100 text-red-800' : 
-                      employee.weekPending > 1 ? 'bg-yellow-100 text-yellow-800' : 
-                      'bg-green-100 text-green-800'
-                    }`}>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${employee.weekPending > 3 ? 'bg-red-100 text-primary' :
+                      employee.weekPending > 1 ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-green-100 text-green-800'
+                      }`}>
                       {employee.weekPending}
                     </span>
                   </td>

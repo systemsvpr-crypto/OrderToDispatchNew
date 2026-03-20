@@ -79,7 +79,7 @@ const DataTable = ({ title, sheetName, columns, renderActions, refreshCount, ski
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between max-w-[1600px] mx-auto w-full">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                            <TableIcon className="text-red-800" />
+                            <TableIcon className="text-green-500" />
                             {title}
                         </h1>
                     </div>
@@ -90,7 +90,7 @@ const DataTable = ({ title, sheetName, columns, renderActions, refreshCount, ski
                             <input
                                 type="text"
                                 placeholder="Search data..."
-                                className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-800/20 focus:border-red-800 w-full sm:w-64"
+                                className="pl-9 pr-4 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-primary/20 focus:border-primary w-full sm:w-64"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
@@ -98,7 +98,7 @@ const DataTable = ({ title, sheetName, columns, renderActions, refreshCount, ski
                         <button
                             onClick={fetchData}
                             disabled={loading}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors disabled:opacity-50"
                         >
                             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                             Refresh
@@ -110,10 +110,10 @@ const DataTable = ({ title, sheetName, columns, renderActions, refreshCount, ski
 
             {/* Content */}
             <div className="flex-1 overflow-hidden p-4 lg:p-6">
-                <div className="bg-white rounded-lg border border-gray-200 shadow-sm h-full flex flex-col max-w-[1600px] mx-auto">
+                <div className="bg-white rounded border border-gray-200 shadow-sm h-full flex flex-col max-w-[1600px] mx-auto">
                     {loading ? (
                         <div className="flex-1 flex flex-col items-center justify-center gap-3">
-                            <Loader2 className="w-8 h-8 text-red-800 animate-spin" />
+                            <Loader2 className="w-8 h-8 text-primary animate-spin" />
                             <p className="text-sm text-gray-600 font-medium">Fetching data...</p>
                         </div>
                     ) : filteredData.length > 0 ? (
@@ -124,7 +124,7 @@ const DataTable = ({ title, sheetName, columns, renderActions, refreshCount, ski
                                         <th className="px-6 py-4 border-b border-gray-200 w-10">
                                             <input
                                                 type="checkbox"
-                                                className="w-4 h-4 rounded border-gray-300 text-red-800 focus:ring-red-800/20 cursor-pointer"
+                                                className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary/20 cursor-pointer"
                                                 checked={filteredData.length > 0 && selectedRows.size === filteredData.length}
                                                 onChange={toggleAll}
                                             />
@@ -140,12 +140,12 @@ const DataTable = ({ title, sheetName, columns, renderActions, refreshCount, ski
                                     {filteredData.map((row, rowIndex) => (
                                         <tr
                                             key={rowIndex}
-                                            className={`hover:bg-gray-50 transition-colors ${selectedRows.has(rowIndex) ? 'bg-red-50/50' : ''}`}
+                                            className={`hover:bg-gray-50 transition-colors ${selectedRows.has(rowIndex) ? 'bg-green-50/50' : ''}`}
                                         >
                                             <td className="px-6 py-4 whitespace-nowrap w-10">
                                                 <input
                                                     type="checkbox"
-                                                    className="w-4 h-4 rounded border-gray-300 text-red-800 focus:ring-red-800/20 cursor-pointer"
+                                                    className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary/20 cursor-pointer"
                                                     checked={selectedRows.has(rowIndex)}
                                                     onChange={() => toggleRow(rowIndex)}
                                                 />

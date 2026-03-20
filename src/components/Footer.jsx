@@ -7,11 +7,11 @@ const Footer = () => {
         <div className="text-center">
           <p className="text-xs text-gray-600">
             Powered by{' '}
-            <a 
-              href="https://www.botivate.in" 
-              target="_blank" 
+            <a
+              href="https://www.botivate.in"
+              target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:text-blue-800 font-medium transition-all duration-200 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 rounded"
+              className="text-primary hover:text-primary-hover font-medium transition-all duration-200 hover:underline focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
             >
               Botivate
             </a>
