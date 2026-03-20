@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { CheckCircle, History, Save, Loader, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
+import { useToast } from '../../contexts/ToastContext';
 
 // Constants outside component — never recreated
 const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
@@ -65,6 +66,7 @@ const DispatchComplete = () => {
     const [itemNames, setItemNames] = useState([]);
     const [godowns, setGodowns] = useState([]);
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const { showToast } = useToast();
 
     const [searchTerm, setSearchTerm] = useState('');
     const [clientFilter, setClientFilter] = useState('');
@@ -502,11 +504,12 @@ const DispatchComplete = () => {
                 await fetchHistory(true);
                 setSelectedRows({});
                 setEditData({});
+                showToast('Dispatch status updated successfully!', 'success');
             } else {
-                alert('Error saving: ' + result.error);
+                showToast(`Error saving: ${result.error}`, 'error');
             }
         } catch (error) {
-            alert('Network error: ' + error.message);
+            showToast(`Network error: ${error.message}`, 'error');
         } finally {
             setIsSaving(false);
         }
@@ -524,22 +527,22 @@ const DispatchComplete = () => {
     }, [fetchOrders, fetchMasterData, fetchHistory, activeTab]);
 
     return (
-        <div className="p-3 sm:p-6 lg:p-8">
+        <div className="p-3 ">
             {/* Header Row with Title, Tabs, Filters, and Actions */}
-            <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <div className="flex flex-wrap items-center gap-4 mb-6 bg-white p-5 rounded-xl shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
                 <h1 className="text-xl font-bold text-gray-800">Dispatch Completed</h1>
 
-                <div className="flex bg-gray-100 p-1 rounded-lg">
+                <div className="flex bg-gray-100 p-1 rounded">
                     <button
                         onClick={() => setActiveTab('pending')}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'pending' ? 'bg-white text-green-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'pending' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                     >
                         <CheckCircle size={16} />
                         Pending
                     </button>
                     <button
                         onClick={() => setActiveTab('history')}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'history' ? 'bg-white text-green-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                     >
                         <History size={16} />
                         History
@@ -552,7 +555,7 @@ const DispatchComplete = () => {
                 <button
                     onClick={handleRefresh}
                     disabled={isLoading || isSaving}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                 >
                     <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                     Refresh
@@ -563,7 +566,7 @@ const DispatchComplete = () => {
                     placeholder="Search..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-32 lg:w-40 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-800 focus:border-transparent outline-none text-sm"
+                    className="w-32 lg:w-40 px-3 py-2 bg-gray-50 border border-gray-200 rounded focus:ring-primary focus:border-primary"
                 />
                 <SearchableDropdown
                     value={clientFilter}
@@ -571,7 +574,7 @@ const DispatchComplete = () => {
                     options={allUniqueClients}
                     allLabel="All Clients"
                     className="w-32 lg:w-40"
-                    focusColor="green-800"
+                    focusColor="primary"
                 />
                 <SearchableDropdown
                     value={godownFilter}
@@ -579,14 +582,14 @@ const DispatchComplete = () => {
                     options={allUniqueGodowns}
                     allLabel="All Godowns"
                     className="w-32 lg:w-40"
-                    focusColor="green-800"
+                    focusColor="primary"
                 />
 
                 {activeTab === 'pending' && Object.values(selectedRows).some(v => v) && (
                     <button
                         onClick={handleSave}
                         disabled={isSaving}
-                        className="flex items-center gap-2 px-4 py-2 bg-green-800 text-white rounded-lg hover:bg-green-900 shadow-md font-bold text-sm disabled:opacity-50"
+                        className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded hover:bg-primary-hover shadow-md font-bold text-sm disabled:opacity-50"
                     >
                         {isSaving ? <Loader size={16} className="animate-spin" /> : <Save size={16} />}
                         {isSaving ? 'Saving...' : 'Save Completion'}
@@ -595,19 +598,29 @@ const DispatchComplete = () => {
             </div>
 
             {(isLoading || isSaving) && (
-                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/20 backdrop-blur-[2px]">
-                    <div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4 border border-gray-100">
+                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
+                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
+                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
                         <div className="relative">
-                            <div className="h-16 w-16 rounded-full border-4 border-gray-100 border-t-green-800 animate-spin"></div>
+                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
+                                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
+                                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
+                            </svg>
                             <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="h-8 w-8 rounded-full border-4 border-gray-100 border-b-green-800 animate-spin-slow"></div>
+                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
                             </div>
                         </div>
-                        <div className="flex flex-col items-center">
-                            <p className="text-sm font-black text-gray-800 uppercase tracking-[0.2em]">
-                                {isSaving ? 'Saving' : 'Syncing'}
-                            </p>
-                            <p className="text-[10px] text-gray-400 font-bold uppercase mt-1">
+                        <div className="flex flex-col items-center text-center">
+                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
+                                {isSaving ? 'Saving' : 'Loading'}
+                                <span className="inline-flex ml-1">
+                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
+                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
+                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
+                                </span>
+                            </h3>
+                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
                                 {isSaving ? 'Completing Dispatch' : 'Updating Data'}
                             </p>
                         </div>
@@ -615,36 +628,36 @@ const DispatchComplete = () => {
                 </div>
             )}
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-white rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 overflow-hidden max-w-[1200px] mx-auto">
                 <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 max-h-[460px] overflow-y-auto">
                     <table className="w-full text-left border-collapse min-w-[1200px]">
                         <thead>
-                            <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10 shadow-sm">
-                                {activeTab === 'pending' && <th className="px-4 py-3">Action</th>}
+                            <tr className="bg-gray-50/80 border-b border-gray-200 text-[11px] uppercase text-gray-500 font-extrabold sticky top-0 z-10 shadow-sm backdrop-blur-sm tracking-wider">
+                                {activeTab === 'pending' && <th className="px-6 py-4 text-center">Action</th>}
                                 {[
                                     { label: 'Dispatch No', key: 'dispatchNo' },
-                                    { label: 'Dispatch Date', key: 'dispatchDate' },
+                                    { label: 'Dispatch Date', key: 'dispatchDate', align: 'center' },
                                     ...(activeTab === 'pending' ? [{ label: 'Order No', key: 'orderNumber' }] : []),
                                     { label: 'Customer', key: activeTab === 'pending' ? 'clientName' : 'customer' },
                                     { label: 'Product', key: activeTab === 'pending' ? 'itemName' : 'product' },
                                     { label: 'Godown', key: activeTab === 'pending' ? 'godownName' : 'godown', align: 'center' },
-                                    { label: 'Order Qty', key: activeTab === 'pending' ? 'qty' : 'orderQty' },
-                                    { label: 'Dispatch Qty', key: 'dispatchQty' },
-                                    { label: 'Complete Date', key: 'completeDate', color: activeTab === 'pending' ? 'green' : '' },
-                                    { label: 'Status', key: 'status', color: activeTab === 'pending' ? 'green' : '', minWidth: activeTab === 'pending' ? '140px' : '120px' },
+                                    { label: 'Order Qty', key: activeTab === 'pending' ? 'qty' : 'orderQty', align: 'right' },
+                                    { label: 'Dispatch Qty', key: 'dispatchQty', align: 'right' },
+                                    { label: 'Complete Date', key: 'completeDate', color: activeTab === 'pending' ? 'green' : '', align: 'center' },
+                                    { label: 'Status', key: 'status', color: activeTab === 'pending' ? 'green' : '', minWidth: activeTab === 'pending' ? '140px' : '120px', align: 'center' },
                                     ...(activeTab === 'pending' ? [{ label: 'CRM Name', key: 'crmName' }] : [])
                                 ].map((col) => (
                                     <th
                                         key={col.key}
-                                        className={`px-4 py-3 cursor-pointer hover:bg-gray-100 transition-colors ${col.align === 'center' ? 'text-center' : ''} ${col.color === 'green' ? 'text-green-700' : ''}`}
+                                        className={`px-6 py-4 cursor-pointer hover:bg-gray-100/50 transition-colors ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left'} ${col.color === 'green' ? 'text-green-700' : ''}`}
                                         style={col.minWidth ? { minWidth: col.minWidth } : {}}
                                         onClick={() => requestSort(col.key)}
                                     >
-                                        <div className={`flex items-center gap-1 ${col.align === 'center' ? 'justify-center' : ''}`}>
+                                        <div className={`flex items-center gap-1.5 ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : 'justify-start'}`}>
                                             {col.label}
                                             <div className="flex flex-col">
-                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-green-800' : 'text-gray-300'} />
-                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-green-800' : 'text-gray-300'} />
+                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-primary' : 'text-gray-300'} />
+                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-primary' : 'text-gray-300'} />
                                             </div>
                                         </div>
                                     </th>
@@ -661,21 +674,21 @@ const DispatchComplete = () => {
                                         className={`${isSelected ? 'bg-green-50/50' : 'hover:bg-gray-50'}`}
                                     >
                                         {activeTab === 'pending' && (
-                                            <td className="px-4 py-3">
+                                            <td className="px-6 py-4 text-center">
                                                 <input
                                                     type="checkbox"
                                                     checked={isSelected}
                                                     onChange={() => handleCheckboxToggle(realIdx, item)}
-                                                    className="rounded text-green-800 focus:ring-green-800 w-4 h-4 cursor-pointer"
+                                                    className="rounded border-gray-300 text-primary focus:ring-primary w-4.5 h-4.5 cursor-pointer transition-all"
                                                 />
                                             </td>
                                         )}
-                                        <td className="px-4 py-3 font-semibold text-gray-900">{item.dispatchNo}</td>
-                                        <td className="px-4 py-3 text-gray-600 text-xs">{formatDisplayDate(item.dispatchDate)}</td>
-                                        {activeTab === 'pending' && <td className="px-4 py-3 text-gray-600 text-xs">{item.orderNumber}</td>}
-                                        <td className="px-4 py-3 font-medium text-gray-800">{item.clientName || item.customer}</td>
+                                        <td className="px-6 py-4 font-bold text-gray-900">{item.dispatchNo}</td>
+                                        <td className="px-6 py-4 text-gray-500 text-center text-xs font-medium">{formatDisplayDate(item.dispatchDate)}</td>
+                                        {activeTab === 'pending' && <td className="px-6 py-4 text-gray-600 text-xs font-medium">{item.orderNumber}</td>}
+                                        <td className="px-6 py-4 font-semibold text-gray-800">{item.clientName || item.customer}</td>
 
-                                        <td className={`px-4 py-3 text-gray-600 font-medium whitespace-nowrap relative ${isSelected ? 'z-[70]' : ''}`}>
+                                        <td className={`px-6 py-4 text-gray-600 font-medium whitespace-nowrap relative ${isSelected ? 'z-[70]' : ''}`}>
                                             {activeTab === 'pending' && isSelected ? (
                                                 <div className="w-64">
                                                     <SearchableDropdown
@@ -684,7 +697,7 @@ const DispatchComplete = () => {
                                                         options={itemNames}
                                                         placeholder="Select Product"
                                                         showAll={false}
-                                                        focusColor="green-800"
+                                                        focusColor="primary"
                                                         className="w-full"
                                                     />
                                                 </div>
@@ -693,7 +706,7 @@ const DispatchComplete = () => {
                                             )}
                                         </td>
 
-                                        <td className={`px-4 py-3 text-center font-bold text-gray-800 relative ${isSelected ? 'z-[60]' : ''}`}>
+                                        <td className={`px-6 py-4 text-center font-bold text-gray-800 relative ${isSelected ? 'z-[60]' : ''}`}>
                                             {activeTab === 'pending' && isSelected ? (
                                                 <div className="w-40 mx-auto">
                                                     <SearchableDropdown
@@ -711,15 +724,15 @@ const DispatchComplete = () => {
                                             )}
                                         </td>
 
-                                        <td className="px-4 py-3 border-l border-gray-50 text-xs">{item.qty || item.orderQty}</td>
+                                        <td className="px-6 py-4 border-l border-gray-50 text-right text-xs font-medium text-gray-700">{item.qty || item.orderQty}</td>
 
-                                        <td className="px-4 py-3 border-l border-gray-50 text-xs font-bold text-red-800">
+                                        <td className="px-6 py-4 border-l border-gray-50 text-right text-xs font-black text-primary bg-primary/5">
                                             {activeTab === 'pending' && isSelected ? (
                                                 <input
                                                     type="text"
                                                     value={editData[realIdx]?.dispatchQty || item.dispatchQty}
                                                     onChange={(e) => handleEditChange(realIdx, 'dispatchQty', e.target.value)}
-                                                    className="w-full px-1 py-0.5 border rounded text-xs outline-none focus:border-green-800"
+                                                    className="w-full px-1 py-0.5 border rounded text-xs outline-none focus:border-primary"
                                                 />
                                             ) : (
                                                 item.dispatchQty
@@ -728,23 +741,23 @@ const DispatchComplete = () => {
 
                                         {activeTab === 'pending' && (
                                             <>
-                                                <td className={`px-4 py-3 relative ${isSelected ? 'z-[50]' : ''}`}>
+                                                <td className={`px-6 py-4 text-center relative ${isSelected ? 'z-[50]' : ''}`}>
                                                     <input
                                                         type="date"
                                                         disabled={!isSelected}
                                                         value={editData[realIdx]?.completeDate || ''}
                                                         onChange={(e) => handleEditChange(realIdx, 'completeDate', e.target.value)}
-                                                        className="px-1 py-0.5 border rounded text-xs outline-none focus:border-green-800"
+                                                        className="px-1 py-0.5 border rounded text-xs outline-none focus:border-primary"
                                                     />
                                                 </td>
-                                                <td className={`px-4 py-3 relative ${isSelected ? 'z-[50]' : ''}`}>
+                                                <td className={`px-6 py-4 text-center relative ${isSelected ? 'z-[50]' : ''}`}>
                                                     <div className="relative group">
                                                         <select
                                                             disabled={!isSelected}
                                                             value={editData[realIdx]?.status || 'Completed'}
                                                             onChange={(e) => handleEditChange(realIdx, 'status', e.target.value)}
-                                                            className={`w-full pl-3 pr-8 py-2 border border-gray-200 rounded-xl text-xs font-semibold appearance-none bg-white transition-all shadow-sm ${isSelected
-                                                                ? 'cursor-pointer hover:border-green-300 focus:ring-2 focus:ring-green-800 focus:border-transparent outline-none'
+                                                            className={`w-full pl-3 pr-8 py-2 border border-gray-200 rounded text-xs font-semibold appearance-none bg-white transition-all shadow-sm ${isSelected
+                                                                ? 'cursor-pointer hover:border-primary focus:ring-primary focus:border-transparent outline-none'
                                                                 : 'bg-gray-50 opacity-70 cursor-not-allowed'
                                                                 }`}
                                                         >
@@ -760,17 +773,17 @@ const DispatchComplete = () => {
                                         )}
                                         {activeTab === 'history' && (
                                             <>
-                                                <td className="px-4 py-3 text-gray-600 text-xs">
+                                                <td className="px-6 py-4 text-gray-500 text-center text-xs font-medium">
                                                     {formatDisplayDate(item.completeDate)}
                                                 </td>
-                                                <td className="px-4 py-3">
-                                                    <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-[10px] font-bold uppercase">
+                                                <td className="px-6 py-4 text-center">
+                                                    <span className="bg-green-100 text-green-700 px-3 py-1.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border border-green-200 shadow-sm">
                                                         {item.status}
                                                     </span>
                                                 </td>
                                             </>
                                         )}
-                                        {activeTab === 'pending' && <td className="px-4 py-3 border-l border-gray-50 text-xs">{item.crmName}</td>}
+                                        {activeTab === 'pending' && <td className="px-6 py-4 border-l border-gray-50 text-xs font-medium text-gray-500">{item.crmName}</td>}
                                     </tr>
                                 );
                             })}
@@ -790,16 +803,3 @@ const DispatchComplete = () => {
 };
 
 export default DispatchComplete;
-
-// Custom Animations (keep as before)
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes spin-slow {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(-360deg); }
-  }
-  .animate-spin-slow {
-    animation: spin-slow 3s linear infinite;
-  }
-`;
-document.head.appendChild(style);

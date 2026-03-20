@@ -33,7 +33,7 @@ input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  box-shadow: 0 0 0 2px #fff, 0 0 0 4px #3b82f6;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px #58cc02;
 }
 
 /* Mobile optimizations */
@@ -49,6 +49,26 @@ textarea:focus {
     display: none !important;
   }
 
+}
+
+/* Remove arrow/spinners from number input */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
+input[type=number] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
 }
 
 /* Remove arrow/spinners from number input */

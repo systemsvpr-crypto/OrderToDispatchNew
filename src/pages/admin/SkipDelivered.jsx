@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Save, Loader, X, Clock, History, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
+import { useToast } from '../../contexts/ToastContext';
 
 const CACHE_KEY = 'skipDeliveredData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
@@ -16,6 +17,7 @@ const SkipDelivered = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [clientFilter, setClientFilter] = useState('');
     const [godownFilter, setGodownFilter] = useState('');
+    const { showToast } = useToast();
 
     const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
     const MASTER_URL = import.meta.env.VITE_MASTER_URL;
@@ -130,7 +132,7 @@ const SkipDelivered = () => {
 
             if (skipResult.success && Array.isArray(skipResult.data)) {
                 const history = skipResult.data.slice(1) // Strictly skip header row
-                    .filter(row => row && (getVal(row, 'orderNumber', 0))) 
+                    .filter(row => row && (getVal(row, 'orderNumber', 0)))
                     .map((item, idx) => ({
                         originalIndex: idx,
                         orderNumber: getVal(item, 'orderNumber', 0) || '-',
@@ -359,10 +361,10 @@ const SkipDelivered = () => {
             setSelectedRows({});
             setEditData({});
 
-            alert('Items successfully submitted to Skip sheet.');
+            showToast('Items successfully submitted to Skip sheet.', 'success');
         } catch (error) {
             console.error('Save error:', error);
-            alert('Save failed: ' + error.message);
+            showToast(`Save failed: ${error.message}`, 'error');
         } finally {
             setIsSaving(false);
         }
@@ -371,13 +373,13 @@ const SkipDelivered = () => {
     return (
         <div className="p-3 sm:p-6 lg:p-8">
             {/* Header with title, tabs, filters, and action button */}
-            <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 rounded shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
                 <h1 className="text-xl font-bold text-gray-800">Skip Delivered</h1>
 
-                <div className="flex bg-gray-100 p-1 rounded-lg">
+                <div className="flex bg-gray-100 p-1 rounded">
                     <button
                         onClick={() => setActiveTab('pending')}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'pending' ? 'bg-white text-indigo-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'pending' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'
                             }`}
                     >
                         <Clock size={16} />
@@ -385,7 +387,7 @@ const SkipDelivered = () => {
                     </button>
                     <button
                         onClick={() => setActiveTab('history')}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'history' ? 'bg-white text-indigo-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'
                             }`}
                     >
                         <History size={16} />
@@ -399,7 +401,7 @@ const SkipDelivered = () => {
                 <button
                     onClick={handleRefresh}
                     disabled={isLoading || isSaving}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                 >
                     <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                     Refresh
@@ -410,7 +412,7 @@ const SkipDelivered = () => {
                     placeholder="Search..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-32 lg:w-40 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-800 outline-none text-sm"
+                    className="w-32 lg:w-40 px-3 py-2 bg-gray-50 border border-gray-200 rounded focus:ring-primary focus:border-primary"
                 />
                 <SearchableDropdown
                     value={clientFilter}
@@ -418,7 +420,7 @@ const SkipDelivered = () => {
                     options={allUniqueClients}
                     allLabel="All Clients"
                     className="w-32 lg:w-40"
-                    focusColor="indigo-800"
+                    focusColor="primary"
                 />
                 <SearchableDropdown
                     value={godownFilter}
@@ -426,14 +428,14 @@ const SkipDelivered = () => {
                     options={allUniqueGodowns}
                     allLabel="All Godowns"
                     className="w-32 lg:w-40"
-                    focusColor="indigo-800"
+                    focusColor="primary"
                 />
 
                 {activeTab === 'pending' && anySelected && (
                     <button
                         onClick={handleSave}
                         disabled={isSaving}
-                        className="flex items-center gap-2 px-4 py-2 bg-indigo-800 text-white rounded-lg hover:bg-indigo-900 shadow-md font-bold text-sm disabled:opacity-50"
+                        className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded hover:bg-primary-hover shadow-md font-bold text-sm disabled:opacity-50"
                     >
                         {isSaving ? <Loader size={16} className="animate-spin" /> : <Save size={16} />}
                         {isSaving ? 'Saving...' : 'Mark Skipped'}
@@ -443,61 +445,81 @@ const SkipDelivered = () => {
 
             {/* Loading overlay */}
             {(isLoading || isSaving) && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 backdrop-blur-sm">
-                    <div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4">
-                        <div className="h-16 w-16 rounded-full border-4 border-gray-100 border-t-indigo-800 animate-spin" />
-                        <p className="text-sm font-bold text-gray-800">
-                            {isLoading ? 'Loading...' : 'Saving...'}
-                        </p>
+                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
+                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
+                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="relative">
+                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
+                                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
+                                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
+                            </div>
+                        </div>
+                        <div className="flex flex-col items-center text-center">
+                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
+                                {isSaving ? 'Saving' : 'Loading'}
+                                <span className="inline-flex ml-1">
+                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
+                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
+                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
+                                </span>
+                            </h3>
+                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
+                                {isSaving ? 'Processing Skip' : 'Retrieving Data'}
+                            </p>
+                        </div>
                     </div>
                 </div>
             )}
 
             {/* Data table */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-white rounded shadow-sm border border-gray-200 overflow-hidden max-w-[1200px] mx-auto">
                 {/* Desktop table view */}
                 <div className="hidden md:block overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 max-h-[460px] overflow-y-auto">
                     <table className="w-full text-left border-collapse min-w-[1600px]">
                         <thead>
                             <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10 shadow-sm">
-                                {activeTab === 'pending' && <th className="px-4 py-3">Action</th>}
+                                {activeTab === 'pending' && <th className="px-6 py-4 text-center">Action</th>}
                                 {activeTab === 'pending' && anySelected && (
                                     <>
-                                        <th className="px-4 py-3 text-indigo-700">Dispatch Qty</th>
-                                        <th className="px-4 py-3 text-indigo-700">Dispatch Date</th>
-                                        <th className="px-4 py-3 text-indigo-700">GST Included</th>
+                                        <th className="px-6 py-4 text-primary-hover text-right">Dispatch Qty</th>
+                                        <th className="px-6 py-4 text-primary-hover text-center">Dispatch Date</th>
+                                        <th className="px-6 py-4 text-primary-hover text-center">GST Included</th>
                                     </>
                                 )}
                                 {[
                                     { label: 'Order Number', key: 'orderNumber' },
-                                    { label: 'Order Date', key: 'orderDate' },
+                                    { label: 'Order Date', key: 'orderDate', align: 'center' },
                                     { label: 'Client Name', key: 'clientName' },
-                                    { label: 'Godown', key: 'godown' },
+                                    { label: 'Godown', key: 'godown', align: 'center' },
                                     { label: 'Item Name', key: 'itemName' },
-                                    { label: 'Rate', key: 'rate' },
-                                    { label: 'Order Qty', key: 'orderQty' },
+                                    { label: 'Rate', key: 'rate', align: 'right' },
+                                    { label: 'Order Qty', key: 'orderQty', align: 'right' },
                                     ...(activeTab === 'pending' ? [
-                                        { label: 'Current Stock', key: 'currentStock' },
-                                        { label: 'Planning Qty', key: 'planningQty' },
-                                        { label: 'Planning Pending Qty', key: 'planningPendingQty' },
-                                        { label: 'Qty Delivered', key: 'qtyDelivered' }
+                                        { label: 'Current Stock', key: 'currentStock', align: 'right' },
+                                        { label: 'Planning Qty', key: 'planningQty', align: 'right' },
+                                        { label: 'Planning Pending Qty', key: 'planningPendingQty', align: 'right' },
+                                        { label: 'Qty Delivered', key: 'qtyDelivered', align: 'right' }
                                     ] : []),
                                     ...(activeTab === 'history' ? [
-                                        { label: 'Dispatch Qty', key: 'dispatchQty' },
-                                        { label: 'Dispatch Date', key: 'dispatchDate' },
-                                        { label: 'Godown Name', key: 'godownName' }
+                                        { label: 'Dispatch Qty', key: 'dispatchQty', align: 'right' },
+                                        { label: 'Dispatch Date', key: 'dispatchDate', align: 'center' },
+                                        { label: 'Godown Name', key: 'godownName', align: 'center' }
                                     ] : [])
                                 ].map((col) => (
                                     <th
                                         key={col.key}
-                                        className="px-4 py-3 cursor-pointer hover:bg-gray-100 transition-colors"
+                                        className={`px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left'}`}
                                         onClick={() => requestSort(col.key)}
                                     >
-                                        <div className="flex items-center gap-1">
+                                        <div className={`flex items-center gap-1 ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : 'justify-start'}`}>
                                             {col.label}
                                             <div className="flex flex-col">
-                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-indigo-800' : 'text-gray-300'} />
-                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-indigo-800' : 'text-gray-300'} />
+                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-primary' : 'text-gray-300'} />
+                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-primary' : 'text-gray-300'} />
                                             </div>
                                         </div>
                                     </th>
@@ -510,52 +532,52 @@ const SkipDelivered = () => {
                                 const isSelected = activeTab === 'pending' && !!selectedRows[originalIdx];
                                 const edit = editData[originalIdx] || {};
                                 return (
-                                    <tr key={`${activeTab}-${originalIdx}`} className={isSelected ? 'bg-indigo-50/50' : 'hover:bg-gray-50'}>
+                                    <tr key={`${activeTab}-${originalIdx}`} className={isSelected ? 'bg-green-50/50' : 'hover:bg-gray-50'}>
                                         {activeTab === 'pending' && (
-                                            <td className="px-4 py-3">
+                                            <td className="px-6 py-4 text-center">
                                                 <input
                                                     type="checkbox"
                                                     checked={isSelected}
                                                     onChange={() => handleCheckboxToggle(originalIdx)}
-                                                    className="rounded text-indigo-800 focus:ring-indigo-800 w-4 h-4 cursor-pointer"
+                                                    className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
                                                 />
                                             </td>
                                         )}
                                         {/* Extra columns: rendered only if anySelected */}
                                         {activeTab === 'pending' && anySelected && (
                                             <>
-                                                <td className="px-4 py-3">
+                                                <td className="px-6 py-4 text-right">
                                                     {isSelected ? (
                                                         <input
                                                             type="number"
                                                             value={edit.dispatchQty || ''}
                                                             onChange={(e) => handleEditChange(originalIdx, 'dispatchQty', e.target.value)}
-                                                            className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-indigo-800 focus:border-indigo-800 outline-none"
+                                                            className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-primary focus:border-primary outline-none text-right"
                                                             placeholder="Qty"
                                                         />
                                                     ) : (
                                                         <span className="text-gray-400">—</span>
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3">
+                                                <td className="px-6 py-4 text-center">
                                                     {isSelected ? (
                                                         <input
                                                             type="date"
                                                             value={formatDateForInput(edit.dispatchDate) || ''}
                                                             onChange={(e) => handleEditChange(originalIdx, 'dispatchDate', e.target.value)}
-                                                            className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-indigo-800 focus:border-indigo-800 outline-none"
+                                                            className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-primary focus:border-primary outline-none"
                                                         />
                                                     ) : (
                                                         <span className="text-gray-400">—</span>
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3">
+                                                <td className="px-6 py-4 text-center">
                                                     {isSelected ? (
                                                         <div className="relative">
                                                             <select
                                                                 value={edit.gstIncluded || 'No'}
                                                                 onChange={(e) => handleEditChange(originalIdx, 'gstIncluded', e.target.value)}
-                                                                className="w-full pl-3 pr-8 py-1 border border-gray-300 rounded text-sm appearance-none bg-white focus:ring-indigo-800 focus:border-indigo-800 outline-none"
+                                                                className="w-full pl-3 pr-8 py-1 border border-gray-300 rounded text-sm appearance-none bg-white focus:ring-primary focus:border-primary outline-none"
                                                             >
                                                                 <option value="Yes">Yes</option>
                                                                 <option value="No">No</option>
@@ -568,10 +590,10 @@ const SkipDelivered = () => {
                                                 </td>
                                             </>
                                         )}
-                                        <td className="px-4 py-3 font-semibold text-gray-900">{item.orderNumber}</td>
-                                        <td className="px-4 py-3 text-gray-600 text-xs">{formatDisplayDate(item.orderDate)}</td>
-                                        <td className="px-4 py-3 font-medium text-gray-800">{item.clientName}</td>
-                                        <td className="px-4 py-3 text-gray-600">
+                                        <td className="px-6 py-4 font-semibold text-gray-900">{item.orderNumber}</td>
+                                        <td className="px-6 py-4 text-gray-600 text-xs text-center">{formatDisplayDate(item.orderDate)}</td>
+                                        <td className="px-6 py-4 font-medium text-gray-800">{item.clientName}</td>
+                                        <td className="px-6 py-4 text-gray-600 text-center">
                                             {isSelected ? (
                                                 <SearchableDropdown
                                                     value={edit.godown || ''}
@@ -579,28 +601,28 @@ const SkipDelivered = () => {
                                                     options={godowns}
                                                     placeholder="Select Godown"
                                                     showAll={false}
-                                                    className="w-full"
+                                                    className="w-full text-left"
                                                 />
                                             ) : (
                                                 item.godown
                                             )}
                                         </td>
-                                        <td className="px-4 py-3 text-gray-600">{item.itemName}</td>
-                                        <td className="px-4 py-3 text-gray-600">{item.rate}</td>
-                                        <td className="px-4 py-3 text-gray-600">{item.orderQty}</td>
+                                        <td className="px-6 py-4 text-gray-600">{item.itemName}</td>
+                                        <td className="px-6 py-4 text-gray-600 text-right">{item.rate}</td>
+                                        <td className="px-6 py-4 text-gray-600 text-right font-bold">{item.orderQty}</td>
                                         {activeTab === 'pending' && (
                                             <>
-                                                <td className="px-4 py-3 text-gray-600">{item.currentStock}</td>
-                                                <td className="px-4 py-3 font-bold text-indigo-800">{item.planningQty}</td>
-                                                <td className="px-4 py-3 text-gray-600">{item.planningPendingQty}</td>
-                                                <td className="px-4 py-3 text-gray-600">{item.qtyDelivered}</td>
+                                                <td className="px-6 py-4 text-gray-600 text-right">{item.currentStock}</td>
+                                                <td className="px-6 py-4 font-bold text-primary text-right">{item.planningQty}</td>
+                                                <td className="px-6 py-4 text-gray-600 text-right">{item.planningPendingQty}</td>
+                                                <td className="px-6 py-4 text-gray-600 text-right">{item.qtyDelivered}</td>
                                             </>
                                         )}
                                         {activeTab === 'history' && (
                                             <>
-                                                <td className="px-4 py-3 text-gray-600 border-l border-gray-100">{item.dispatchQty}</td>
-                                                <td className="px-4 py-3 text-gray-600 text-xs">{formatDisplayDate(item.dispatchDate)}</td>
-                                                <td className="px-4 py-3 text-gray-600">{item.godownName}</td>
+                                                <td className="px-6 py-4 text-gray-600 border-l border-gray-100 text-right font-bold">{item.dispatchQty}</td>
+                                                <td className="px-6 py-4 text-gray-600 text-xs text-center">{formatDisplayDate(item.dispatchDate)}</td>
+                                                <td className="px-6 py-4 text-gray-600 text-center">{item.godownName}</td>
                                             </>
                                         )}
                                     </tr>
@@ -631,7 +653,7 @@ const SkipDelivered = () => {
                         const isSelected = activeTab === 'pending' && !!selectedRows[originalIdx];
                         const edit = editData[originalIdx] || {};
                         return (
-                            <div key={`${activeTab}-${originalIdx}`} className={`p-4 space-y-3 ${isSelected ? 'bg-indigo-50/30' : 'bg-white'}`}>
+                            <div key={`${activeTab}-${originalIdx}`} className={`p-4 space-y-3 ${isSelected ? 'bg-green-50/30' : 'bg-white'}`}>
                                 <div className="flex justify-between items-start">
                                     <div className="flex gap-3 items-start">
                                         {activeTab === 'pending' && (
@@ -639,11 +661,11 @@ const SkipDelivered = () => {
                                                 type="checkbox"
                                                 checked={isSelected}
                                                 onChange={() => handleCheckboxToggle(originalIdx)}
-                                                className="mt-1 rounded text-indigo-800 focus:ring-indigo-800 w-5 h-5 cursor-pointer"
+                                                className="mt-1 rounded text-primary focus:ring-primary w-5 h-5 cursor-pointer"
                                             />
                                         )}
                                         <div>
-                                            <p className="text-[10px] font-bold text-indigo-700 uppercase leading-none mb-1">{item.orderNumber}</p>
+                                            <p className="text-[10px] font-bold text-primary uppercase leading-none mb-1">{item.orderNumber}</p>
                                             <h4 className="text-sm font-bold text-gray-900 leading-tight">{item.clientName}</h4>
                                             <p className="text-[10px] mt-1 text-gray-500">{item.itemName}</p>
                                         </div>
@@ -734,7 +756,7 @@ const SkipDelivered = () => {
                                             </div>
                                             <div>
                                                 <span className="text-gray-400 text-[9px] uppercase font-bold tracking-tight">Planning Qty</span>
-                                                <p className="font-bold text-indigo-800">{item.planningQty}</p>
+                                                <p className="font-bold text-primary">{item.planningQty}</p>
                                             </div>
                                             <div>
                                                 <span className="text-gray-400 text-[9px] uppercase font-bold tracking-tight">Planning Pending</span>
@@ -761,7 +783,7 @@ const SkipDelivered = () => {
                 <div className="flex justify-end mt-4">
                     <button
                         onClick={() => { setSearchTerm(''); setClientFilter(''); setGodownFilter(''); }}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-xs font-bold"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 transition-colors text-xs font-bold"
                     >
                         <X size={14} />
                         Clear Filters

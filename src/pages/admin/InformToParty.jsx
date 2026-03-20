@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { BellRing, History, Save, X, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
+import { useToast } from '../../contexts/ToastContext';
 
 const ORDER_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
 
@@ -18,6 +19,7 @@ const InformToPartyBeforeDispatch = () => {
     const [godownFilter, setGodownFilter] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const { showToast } = useToast();
 
     const formatDisplayDate = (dateStr) => {
         if (!dateStr || dateStr === '-') return '-';
@@ -57,14 +59,14 @@ const InformToPartyBeforeDispatch = () => {
                 }));
 
                 // Pending: columnK not empty, columnL empty
-                const pending = allItems.filter(item => 
-                    item.columnK && item.columnK.toString().trim() !== '' && 
+                const pending = allItems.filter(item =>
+                    item.columnK && item.columnK.toString().trim() !== '' &&
                     (!item.columnL || item.columnL.toString().trim() === '')
                 );
 
                 // History: both columnK and columnL not empty
-                const history = allItems.filter(item => 
-                    item.columnK && item.columnK.toString().trim() !== '' && 
+                const history = allItems.filter(item =>
+                    item.columnK && item.columnK.toString().trim() !== '' &&
                     item.columnL && item.columnL.toString().trim() !== ''
                 );
 
@@ -110,12 +112,12 @@ const InformToPartyBeforeDispatch = () => {
     }, [pendingItems, historyItems]);
 
     // Memoized Filter Options
-    const allUniqueClients = useMemo(() => 
+    const allUniqueClients = useMemo(() =>
         [...new Set([...pendingItems.map(o => o.clientName), ...historyItems.map(h => h.clientName)])].sort(),
         [pendingItems, historyItems]
     );
 
-    const allUniqueGodowns = useMemo(() => 
+    const allUniqueGodowns = useMemo(() =>
         [...new Set([...pendingItems.map(o => o.godownName), ...historyItems.map(h => h.godownName)])].sort(),
         [pendingItems, historyItems]
     );
@@ -201,7 +203,7 @@ const InformToPartyBeforeDispatch = () => {
     const handleSave = async () => {
         const rowsToSubmit = [];
         const selectedDNs = Object.keys(selectedRows);
-        
+
         if (selectedDNs.length === 0) return;
 
         setIsLoading(true);
@@ -226,7 +228,7 @@ const InformToPartyBeforeDispatch = () => {
 
         try {
             const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
-            
+
             await fetch(ORDER_URL, {
                 method: 'POST',
                 mode: 'no-cors',
@@ -238,13 +240,14 @@ const InformToPartyBeforeDispatch = () => {
                 })
             });
 
-            alert('Confirmation saved to "Before Dispatch" sheet successfully!');
+            showToast('Confirmation saved to "Before Dispatch" sheet successfully!', 'success');
             
-            // Clear selected rows – no need to refetch because Planning sheet remains unchanged
+            // Clear selected rows and refresh data
             setSelectedRows({});
+            handleRefresh();
         } catch (error) {
             console.error('Submission failed:', error);
-            alert('Failed to submit confirmation. Please check console.');
+            showToast('Failed to submit confirmation. Please check console.', 'error');
         } finally {
             setIsLoading(false);
         }
@@ -259,27 +262,25 @@ const InformToPartyBeforeDispatch = () => {
     return (
         <div className="p-3 sm:p-6 lg:p-8">
             {/* Header */}
-            <div className="flex flex-col gap-4 mb-6 bg-white p-4 lg:p-5 rounded-xl shadow-sm border border-gray-100">
+            <div className="flex flex-col gap-4 mb-6 bg-white p-4 lg:p-5 rounded shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
                 {/* Top row: title, tabs, actions */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex flex-wrap items-center gap-4">
                         <h1 className="text-xl font-bold text-gray-800 tracking-tight whitespace-nowrap">Inform to Party (Before Dispatch)</h1>
 
-                        <div className="flex bg-gray-100 p-1 rounded-lg">
+                        <div className="flex bg-gray-100 p-1 rounded">
                             <button
                                 onClick={() => setActiveTab('pending')}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-bold transition-all ${
-                                    activeTab === 'pending' ? 'bg-white text-blue-800 shadow-sm' : 'text-gray-500 hover:text-gray-800'
-                                }`}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'pending' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                                    }`}
                             >
                                 <BellRing size={16} />
                                 Pending
                             </button>
                             <button
                                 onClick={() => setActiveTab('history')}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-bold transition-all ${
-                                    activeTab === 'history' ? 'bg-white text-blue-800 shadow-sm' : 'text-gray-500 hover:text-gray-800'
-                                }`}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                                    }`}
                             >
                                 <History size={16} />
                                 History
@@ -291,7 +292,7 @@ const InformToPartyBeforeDispatch = () => {
                         <button
                             onClick={handleRefresh}
                             disabled={isLoading}
-                            className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
+                            className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                         >
                             <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                             Refresh
@@ -300,17 +301,17 @@ const InformToPartyBeforeDispatch = () => {
                         {(searchTerm || clientFilter || godownFilter) && (
                             <button
                                 onClick={() => { setSearchTerm(''); setClientFilter(''); setGodownFilter(''); }}
-                                className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-xs font-bold border border-blue-100"
+                                className="flex items-center gap-1.5 px-3 py-2 bg-green-50 text-primary rounded hover:bg-green-100 transition-colors text-xs font-bold border border-green-100"
                             >
                                 <X size={14} />
                                 Clear Filters
                             </button>
                         )}
-                        
+
                         {activeTab === 'pending' && Object.values(selectedRows).some(v => v) && (
                             <button
                                 onClick={handleSave}
-                                className="flex items-center gap-2 px-4 py-2 bg-blue-800 text-white rounded-lg hover:bg-blue-900 shadow-md font-bold text-sm ml-auto sm:ml-0"
+                                className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded hover:bg-primary-hover shadow-md font-bold text-sm ml-auto sm:ml-0"
                             >
                                 <Save size={16} />
                                 Confirm Notification
@@ -326,7 +327,7 @@ const InformToPartyBeforeDispatch = () => {
                         placeholder="Search records..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-800 focus:border-transparent outline-none text-sm transition-all"
+                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm transition-all"
                     />
                     <SearchableDropdown
                         value={clientFilter}
@@ -334,7 +335,7 @@ const InformToPartyBeforeDispatch = () => {
                         options={allUniqueClients}
                         allLabel="All Clients"
                         className="w-full"
-                        focusColor="blue-800"
+                        focusColor="primary"
                     />
                     <SearchableDropdown
                         value={godownFilter}
@@ -342,58 +343,72 @@ const InformToPartyBeforeDispatch = () => {
                         options={allUniqueGodowns}
                         allLabel="All Godowns"
                         className="w-full"
-                        focusColor="blue-800"
+                        focusColor="primary"
                     />
                 </div>
             </div>
 
             {/* Loading overlay */}
             {isLoading && (
-                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/20 backdrop-blur-[2px]">
-                    <div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4 border border-gray-100">
+                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
+                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
+                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
                         <div className="relative">
-                            <div className="h-16 w-16 rounded-full border-4 border-gray-100 border-t-blue-800 animate-spin"></div>
+                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
+                                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
+                                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
+                            </svg>
                             <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="h-8 w-8 rounded-full border-4 border-gray-100 border-b-blue-800 animate-spin-slow"></div>
+                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
                             </div>
                         </div>
-                        <div className="flex flex-col items-center">
-                            <p className="text-sm font-black text-gray-800 uppercase tracking-[0.2em]">Loading</p>
-                            <p className="text-[10px] text-gray-400 font-bold uppercase mt-1">Retrieving Records</p>
+                        <div className="flex flex-col items-center text-center">
+                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
+                                Loading
+                                <span className="inline-flex ml-1">
+                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
+                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
+                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
+                                </span>
+                            </h3>
+                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
+                                Retrieving Records
+                            </p>
                         </div>
                     </div>
                 </div>
             )}
 
             {/* Data Table */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-white rounded shadow-sm border border-gray-200 overflow-hidden max-w-[1200px] mx-auto">
                 {/* Desktop Table */}
                 <div className="hidden md:block overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 max-h-[460px] overflow-y-auto">
                     <table className="w-full text-left border-collapse min-w-[1200px]">
                         <thead>
                             <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10 shadow-sm">
-                                {activeTab === 'pending' && <th className="px-4 py-3">Action</th>}
+                                {activeTab === 'pending' && <th className="px-6 py-4 text-center">Action</th>}
                                 {[
                                     ...(activeTab === 'pending' ? [{ label: 'Order No', key: 'orderNo' }] : []),
                                     { label: 'Dispatch Number', key: 'dispatchNo', color: 'blue' },
-                                    { label: 'Dispatch Qty', key: 'dispatchQty' },
-                                    { label: 'Dispatch Date', key: 'dispatchDate' },
+                                    { label: 'Dispatch Qty', key: 'dispatchQty', align: 'right' },
+                                    { label: 'Dispatch Date', key: 'dispatchDate', align: 'center' },
                                     { label: 'Client Name', key: 'clientName' },
-                                    { label: 'Godown Name', key: 'godownName' },
+                                    { label: 'Godown Name', key: 'godownName', align: 'center' },
                                     { label: 'Item Name', key: 'itemName' },
-                                    { label: 'Qty', key: 'qty' },
-                                    ...(activeTab === 'history' ? [{ label: 'Status', key: 'status' }] : [])
+                                    { label: 'Qty', key: 'qty', align: 'right' },
+                                    ...(activeTab === 'history' ? [{ label: 'Status', key: 'status', align: 'center' }] : [])
                                 ].map((col) => (
                                     <th
                                         key={col.key}
-                                        className={`px-4 py-3 cursor-pointer hover:bg-gray-100 transition-colors ${col.color === 'blue' ? 'text-blue-700' : ''}`}
+                                        className={`px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors ${col.color === 'blue' ? 'text-primary' : ''} ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left'}`}
                                         onClick={() => requestSort(col.key)}
                                     >
-                                        <div className="flex items-center gap-1">
+                                        <div className={`flex items-center gap-1 ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : 'justify-start'}`}>
                                             {col.label}
                                             <div className="flex flex-col">
-                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-blue-800' : 'text-gray-300'} />
-                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-blue-800' : 'text-gray-300'} />
+                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-primary' : 'text-gray-300'} />
+                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-primary' : 'text-gray-300'} />
                                             </div>
                                         </div>
                                     </th>
@@ -402,21 +417,21 @@ const InformToPartyBeforeDispatch = () => {
                         </thead>
                         <tbody className="divide-y divide-gray-200 text-sm">
                             {(activeTab === 'pending' ? filteredAndSortedPending : filteredAndSortedHistory).map((item) => (
-                                <tr key={item.id} className={`${selectedRows[item.dispatchNo] ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}>
+                                <tr key={item.id} className={`${selectedRows[item.dispatchNo] ? 'bg-green-50/50' : 'hover:bg-gray-50'}`}>
                                     {activeTab === 'pending' && (
-                                        <td className="px-4 py-3">
-                                            <div className="flex items-center gap-2">
+                                        <td className="px-6 py-4 text-center">
+                                            <div className="flex items-center gap-2 justify-center">
                                                 <input
                                                     type="checkbox"
                                                     checked={!!selectedRows[item.dispatchNo]}
                                                     onChange={() => handleCheckboxToggle(item.dispatchNo)}
-                                                    className="rounded text-blue-800 focus:ring-blue-800 cursor-pointer"
+                                                    className="rounded text-primary focus:ring-primary cursor-pointer w-4 h-4"
                                                 />
                                                 {selectedRows[item.dispatchNo] && (
                                                     <select
                                                         value={selectedRows[item.dispatchNo]}
                                                         onChange={(e) => handleStatusChange(item.dispatchNo, e.target.value)}
-                                                        className="text-[10px] font-bold border border-blue-200 rounded px-1 py-0.5 bg-blue-50 text-blue-800 outline-none focus:ring-1 focus:ring-blue-500 animate-in fade-in zoom-in duration-200"
+                                                        className="text-[10px] font-bold border border-green-200 rounded px-1 py-0.5 bg-green-50 text-primary outline-none focus:ring-1 focus:ring-primary animate-in fade-in zoom-in duration-200"
                                                     >
                                                         <option value="yes">YES</option>
                                                         <option value="no">NO</option>
@@ -425,17 +440,17 @@ const InformToPartyBeforeDispatch = () => {
                                             </div>
                                         </td>
                                     )}
-                                    {activeTab === 'pending' && <td className="px-4 py-3">{item.orderNo}</td>}
-                                    <td className="px-4 py-3 font-bold text-blue-700">{item.dispatchNo}</td>
-                                    <td className="px-4 py-3 font-medium text-gray-700">{item.dispatchQty}</td>
-                                    <td className="px-4 py-3 font-bold text-blue-700">{formatDisplayDate(item.dispatchDate)}</td>
-                                    <td className="px-4 py-3">{item.clientName}</td>
-                                    <td className="px-4 py-3">{item.godownName}</td>
-                                    <td className="px-4 py-3">{item.itemName}</td>
-                                    <td className="px-4 py-3">{item.qty}</td>
+                                    {activeTab === 'pending' && <td className="px-6 py-4">{item.orderNo}</td>}
+                                    <td className="px-6 py-4 font-bold text-primary">{item.dispatchNo}</td>
+                                    <td className="px-6 py-4 font-medium text-gray-700 text-right">{item.dispatchQty}</td>
+                                    <td className="px-6 py-4 font-bold text-primary text-center">{formatDisplayDate(item.dispatchDate)}</td>
+                                    <td className="px-6 py-4">{item.clientName}</td>
+                                    <td className="px-6 py-4 text-center">{item.godownName}</td>
+                                    <td className="px-6 py-4">{item.itemName}</td>
+                                    <td className="px-6 py-4 text-right">{item.qty}</td>
                                     {activeTab === 'history' && (
-                                        <td className="px-4 py-3">
-                                            <span className="px-2 py-1 rounded-full text-[10px] font-bold bg-green-100 text-green-700">
+                                        <td className="px-6 py-4 text-center">
+                                            <span className="px-2 py-1 rounded text-[10px] font-bold bg-green-100 text-green-700">
                                                 Informed
                                             </span>
                                         </td>
@@ -456,7 +471,7 @@ const InformToPartyBeforeDispatch = () => {
                 {/* Mobile Card View */}
                 <div className="md:hidden divide-y divide-gray-200">
                     {(activeTab === 'pending' ? filteredAndSortedPending : filteredAndSortedHistory).map((item) => (
-                        <div key={item.id} className={`p-4 space-y-3 ${selectedRows[item.dispatchNo] ? 'bg-blue-50/30' : 'bg-white'}`}>
+                        <div key={item.id} className={`p-4 space-y-3 ${selectedRows[item.dispatchNo] ? 'bg-green-50/30' : 'bg-white'}`}>
                             <div className="flex justify-between items-start">
                                 <div className="flex gap-3 items-start">
                                     {activeTab === 'pending' && (
@@ -465,13 +480,13 @@ const InformToPartyBeforeDispatch = () => {
                                                 type="checkbox"
                                                 checked={!!selectedRows[item.dispatchNo]}
                                                 onChange={() => handleCheckboxToggle(item.dispatchNo)}
-                                                className="mt-1 rounded text-blue-800 focus:ring-blue-800 w-5 h-5 cursor-pointer"
+                                                className="mt-1 rounded text-primary focus:ring-primary w-5 h-5 cursor-pointer"
                                             />
                                             {selectedRows[item.dispatchNo] && (
                                                 <select
                                                     value={selectedRows[item.dispatchNo]}
                                                     onChange={(e) => handleStatusChange(item.dispatchNo, e.target.value)}
-                                                    className="text-[10px] font-bold border border-blue-200 rounded px-1.5 py-1 bg-blue-50 text-blue-800 outline-none animate-in fade-in slide-in-from-left-2 duration-200"
+                                                    className="text-[10px] font-bold border border-green-200 rounded px-1.5 py-1 bg-green-50 text-primary outline-none animate-in fade-in slide-in-from-left-2 duration-200"
                                                 >
                                                     <option value="yes">YES</option>
                                                     <option value="no">NO</option>
@@ -480,13 +495,13 @@ const InformToPartyBeforeDispatch = () => {
                                         </div>
                                     )}
                                     <div>
-                                        <p className="text-[10px] font-bold text-blue-700 uppercase leading-none mb-1">{item.dispatchNo}</p>
+                                        <p className="text-[10px] font-bold text-primary uppercase leading-none mb-1">{item.dispatchNo}</p>
                                         <h4 className="text-sm font-bold text-gray-900 leading-tight">{item.clientName}</h4>
                                         <p className="text-[10px] mt-1 text-gray-500">{item.itemName}</p>
                                     </div>
                                 </div>
                                 {activeTab === 'history' && (
-                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-green-100 text-green-700">
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-100 text-green-700">
                                         Informed
                                     </span>
                                 )}
@@ -494,11 +509,11 @@ const InformToPartyBeforeDispatch = () => {
                             <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-[11px] text-gray-600 pt-1">
                                 <div className="flex flex-col">
                                     <span className="text-gray-400 text-[9px] uppercase font-bold">Disp Qty</span>
-                                    <span className="font-bold text-blue-800">{item.dispatchQty}</span>
+                                    <span className="font-bold text-primary">{item.dispatchQty}</span>
                                 </div>
                                 <div className="flex flex-col">
                                     <span className="text-gray-400 text-[9px] uppercase font-bold">Disp Date</span>
-                                    <span className="font-bold text-blue-800">{formatDisplayDate(item.dispatchDate)}</span>
+                                    <span className="font-bold text-primary">{formatDisplayDate(item.dispatchDate)}</span>
                                 </div>
                                 {activeTab === 'pending' && (
                                     <div className="flex flex-col">
@@ -519,15 +534,6 @@ const InformToPartyBeforeDispatch = () => {
                 </div>
             </div>
 
-            <style dangerouslySetInnerHTML={{__html: `
-              @keyframes spin-slow {
-                from { transform: rotate(0deg); }
-                to { transform: rotate(-360deg); }
-              }
-              .animate-spin-slow {
-                animation: spin-slow 3s linear infinite;
-              }
-            `}} />
         </div>
     );
 };

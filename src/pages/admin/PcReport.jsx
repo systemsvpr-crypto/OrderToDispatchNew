@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { X, Loader, Save, RefreshCcw, ChevronUp, ChevronDown } from 'lucide-react';
+import { useToast } from '../../contexts/ToastContext';
 
 const CACHE_KEY = 'pcReportData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
@@ -16,6 +17,7 @@ const PcReport = () => {
         status: 'Running',
         remarks: ''
     });
+    const { showToast } = useToast();
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
 
     const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
@@ -204,11 +206,12 @@ const PcReport = () => {
             if (!result.success) throw new Error(result.error || 'Unknown error');
 
             sessionStorage.removeItem(CACHE_KEY);
+            showToast('Update submitted successfully.', 'success');
             await loadData(true);
             setModalOpen(false);
         } catch (error) {
             console.error('Submit error:', error);
-            alert('Submission failed: ' + error.message);
+            showToast(`Submission failed: ${error.message}`, 'error');
         } finally {
             setIsSaving(false);
         }
@@ -216,11 +219,11 @@ const PcReport = () => {
 
     return (
         <div className="p-3 sm:p-6 lg:p-8">
-            <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 lg:p-5 rounded shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
                 <h1 className="text-xl font-bold text-gray-800">PC Report</h1>
                 <button
                     onClick={handleRefresh}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors text-xs font-bold border border-indigo-100"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-green-50 text-primary rounded hover:bg-green-100 transition-colors text-xs font-bold border border-green-100"
                 >
                     <RefreshCcw size={14} className={isLoading ? 'animate-spin' : ''} />
                     Refresh
@@ -232,7 +235,7 @@ const PcReport = () => {
                         placeholder="Search..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-40 lg:w-64 px-10 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-600 outline-none text-sm transition-all"
+                        className="w-40 lg:w-64 px-10 py-2 bg-gray-50 border border-gray-200 rounded focus:ring-primary focus:border-primary"
                     />
                     <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
@@ -245,30 +248,30 @@ const PcReport = () => {
                 </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-white rounded shadow-sm border border-gray-200 overflow-hidden max-w-[1200px] mx-auto">
                 <div className="overflow-x-auto scrollbar-thin max-h-[500px]">
                     <table className="w-full text-left border-collapse min-w-[1400px]">
                         <thead>
                             <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10 shadow-sm">
-                                <th className="px-4 py-3 sticky left-0 bg-gray-50 z-20">Action</th>
+                                <th className="px-6 py-4 sticky left-0 bg-gray-50 z-20 text-center">Action</th>
                                 {[
                                     { label: 'Unique Number', key: 'orderNumber' },
-                                    { label: 'Planned Date', key: 'plannedDate' },
+                                    { label: 'Planned Date', key: 'plannedDate', align: 'center' },
                                     { label: 'Step Name', key: 'stepName' },
                                     { label: 'Who', key: 'who' },
                                     { label: 'Client Name', key: 'clientName' },
-                                    { label: 'Godown', key: 'godown' },
+                                    { label: 'Godown', key: 'godown', align: 'center' },
                                     { label: 'Item Name', key: 'itemName' },
-                                    { label: 'Order Qty', key: 'orderQty' },
-                                    { label: 'Status', key: 'status' },
+                                    { label: 'Order Qty', key: 'orderQty', align: 'right' },
+                                    { label: 'Status', key: 'status', align: 'center' },
                                     { label: 'Remarks', key: 'remarks' }
                                 ].map((col) => (
-                                    <th key={col.key} className="px-4 py-3 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort(col.key)}>
-                                        <div className="flex items-center gap-1">
+                                    <th key={col.key} className={`px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left'}`} onClick={() => requestSort(col.key)}>
+                                        <div className={`flex items-center gap-1 ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : 'justify-start'}`}>
                                             {col.label}
                                             <div className="flex flex-col">
-                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-indigo-600' : 'text-gray-300'} />
-                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-indigo-600' : 'text-gray-300'} />
+                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-primary' : 'text-gray-300'} />
+                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-primary' : 'text-gray-300'} />
                                             </div>
                                         </div>
                                     </th>
@@ -278,23 +281,23 @@ const PcReport = () => {
                         <tbody className="divide-y divide-gray-200 text-sm">
                             {filteredAndSortedItems.map((item) => (
                                 <tr key={item.originalIndex} className="hover:bg-gray-50">
-                                    <td className="px-4 py-3 sticky left-0 bg-white hover:bg-gray-50 z-10 border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">
-                                        <button onClick={() => openReportModal(item)} className="px-3 py-1 bg-indigo-600 text-white rounded-md text-xs font-medium hover:bg-indigo-700 transition-colors">Update</button>
+                                    <td className="px-6 py-4 sticky left-0 bg-white hover:bg-gray-50 z-1 border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.05)] text-center">
+                                        <button onClick={() => openReportModal(item)} className="px-3 py-1 bg-primary text-white rounded-md text-xs font-medium hover:bg-primary-hover transition-colors">Update</button>
                                     </td>
-                                    <td className="px-4 py-3 font-semibold text-gray-900">{item.orderNumber}</td>
-                                    <td className="px-4 py-3 text-gray-600">{formatDisplayDate(item.plannedDate)}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.stepName}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.who}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.clientName}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.godown}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.itemName}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.orderQty}</td>
-                                    <td className="px-4 py-3">
-                                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${item.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                    <td className="px-6 py-4 font-semibold text-gray-900">{item.orderNumber}</td>
+                                    <td className="px-6 py-4 text-gray-600 text-center">{formatDisplayDate(item.plannedDate)}</td>
+                                    <td className="px-6 py-4 text-gray-600">{item.stepName}</td>
+                                    <td className="px-6 py-4 text-gray-600">{item.who}</td>
+                                    <td className="px-6 py-4 text-gray-600">{item.clientName}</td>
+                                    <td className="px-6 py-4 text-gray-600 text-center">{item.godown}</td>
+                                    <td className="px-6 py-4 text-gray-600">{item.itemName}</td>
+                                    <td className="px-6 py-4 text-gray-600 text-right">{item.orderQty}</td>
+                                    <td className="px-6 py-4 text-center">
+                                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${item.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                                             {item.status}
                                         </span>
                                     </td>
-                                    <td className="px-4 py-3 text-gray-600">{item.remarks}</td>
+                                    <td className="px-6 py-4 text-gray-600">{item.remarks}</td>
                                 </tr>
                             ))}
                             {filteredAndSortedItems.length === 0 && (
@@ -308,53 +311,75 @@ const PcReport = () => {
             {/* Mobile View */}
             <div className="md:hidden mt-4 space-y-3">
                 {filteredAndSortedItems.map((item) => (
-                    <div key={item.originalIndex} className="p-4 bg-white rounded-xl shadow-sm border border-gray-100 space-y-3">
+                    <div key={item.originalIndex} className="p-4 bg-white rounded shadow-sm border border-gray-100 space-y-3">
                         <div className="flex justify-between items-start border-b border-gray-50 pb-2">
                             <div>
-                                <p className="text-[10px] font-bold text-indigo-700 uppercase">{item.orderNumber}</p>
+                                <p className="text-[10px] font-bold text-primary uppercase">{item.orderNumber}</p>
                                 <h4 className="text-sm font-bold text-gray-900">{item.itemName}</h4>
                             </div>
-                            <button onClick={() => openReportModal(item)} className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-medium shadow-sm hover:bg-indigo-700">Update</button>
+                            <button onClick={() => openReportModal(item)} className="px-3 py-1 bg-primary text-white rounded text-xs font-medium shadow-sm hover:bg-primary-hover">Update</button>
                         </div>
                         <div className="grid grid-cols-2 gap-y-2 text-[11px]">
                             <div className="text-gray-500">Planned: <span className="text-gray-800 font-medium">{formatDisplayDate(item.plannedDate)}</span></div>
                             <div className="text-gray-500">Step: <span className="text-gray-800 font-medium">{item.stepName}</span></div>
                             <div className="text-gray-500">Who: <span className="text-gray-800 font-medium">{item.who}</span></div>
                             <div className="text-gray-500">Qty: <span className="text-gray-800 font-bold">{item.orderQty}</span></div>
-                            <div className="col-span-2 text-gray-500">Status: <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${item.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{item.status}</span></div>
+                            <div className="col-span-2 text-gray-500">Status: <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${item.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{item.status}</span></div>
                         </div>
                     </div>
                 ))}
             </div>
 
             {(isLoading || isSaving) && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/10 backdrop-blur-[1px]">
-                    <div className="bg-white p-6 rounded-2xl shadow-xl flex flex-col items-center gap-3 animate-in fade-in zoom-in duration-200">
-                        <Loader className="animate-spin text-indigo-700" size={32} />
-                        <p className="text-sm font-bold text-gray-700">{isLoading ? 'Syncing Report Data...' : 'Saving Changes...'}</p>
+                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
+                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
+                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="relative">
+                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
+                                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
+                                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
+                            </div>
+                        </div>
+                        <div className="flex flex-col items-center text-center">
+                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
+                                {isSaving ? 'Saving' : 'Loading'}
+                                <span className="inline-flex ml-1">
+                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
+                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
+                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
+                                </span>
+                            </h3>
+                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
+                                {isSaving ? 'Updating Report' : 'Syncing Report Data'}
+                            </p>
+                        </div>
                     </div>
                 </div>
             )}
 
             {modalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-300">
-                        <div className="px-6 py-4 bg-indigo-600 text-white flex justify-between items-center">
+                    <div className="bg-white rounded shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-300">
+                        <div className="px-6 py-4 bg-primary text-white flex justify-between items-center">
                             <h2 className="text-lg font-bold">Update PC Status</h2>
                             <button onClick={() => setModalOpen(false)} className="text-white/80 hover:text-white"><X size={20} /></button>
                         </div>
                         <form onSubmit={handleSubmit} className="p-6 space-y-4">
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Unique Number</label>
-                                <div className="px-3 py-2 bg-gray-50 border border-gray-100 rounded-lg text-sm text-gray-700 font-semibold">{currentItem?.orderNumber}</div>
+                                <div className="px-3 py-2 bg-gray-50 border border-gray-100 rounded text-sm text-gray-700 font-semibold">{currentItem?.orderNumber}</div>
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Stage / Step Name</label>
-                                <input type="text" name="stage" value={formData.stage} onChange={handleInputChange} required className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-600 outline-none text-sm" placeholder="Enter current stage" />
+                                <input type="text" name="stage" value={formData.stage} onChange={handleInputChange} required className="w-full px-3 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm" placeholder="Enter current stage" />
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Compliance Status</label>
-                                <select name="status" value={formData.status} onChange={handleInputChange} className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-600 outline-none text-sm">
+                                <select name="status" value={formData.status} onChange={handleInputChange} className="w-full px-3 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm">
                                     <option value="Running">Running</option>
                                     <option value="Completed">Completed</option>
                                     <option value="Order Cancel">Order Cancel</option>
@@ -362,11 +387,11 @@ const PcReport = () => {
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Remarks</label>
-                                <textarea name="remarks" value={formData.remarks} onChange={handleInputChange} rows="3" className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-600 outline-none text-sm resize-none" placeholder="Enter details..." />
+                                <textarea name="remarks" value={formData.remarks} onChange={handleInputChange} rows="3" className="w-full px-3 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm resize-none" placeholder="Enter details..." />
                             </div>
                             <div className="flex justify-end gap-3 pt-4">
-                                <button type="button" onClick={() => setModalOpen(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 text-sm font-medium">Cancel</button>
-                                <button type="submit" disabled={isSaving} className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 text-sm font-bold shadow-md hover:shadow-lg transition-all">
+                                <button type="button" onClick={() => setModalOpen(false)} className="px-4 py-2 border border-gray-200 rounded text-gray-600 hover:bg-gray-50 text-sm font-medium">Cancel</button>
+                                <button type="submit" disabled={isSaving} className="flex items-center gap-2 px-6 py-2 bg-primary text-white rounded hover:bg-primary-hover disabled:opacity-50 text-sm font-bold shadow-md hover:shadow-lg transition-all">
                                     {isSaving ? <Loader size={16} className="animate-spin" /> : <Save size={16} />}
                                     {isSaving ? 'Processing...' : 'Submit Update'}
                                 </button>

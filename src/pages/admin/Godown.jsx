@@ -157,9 +157,9 @@ const Godown = () => {
 
     return (
         <div className="p-3 sm:p-6 lg:p-8">
-            <div className="flex flex-wrap items-center justify-between gap-4 mb-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-4 bg-white p-4 rounded shadow-sm border border-white/50 max-w-[1200px] mx-auto">
                 <div className="flex items-center gap-3">
-                    <div className="p-2 bg-indigo-50 rounded-lg text-indigo-700"><Filter size={20} /></div>
+                    <div className="p-2 bg-green-50 rounded text-primary"><Filter size={20} /></div>
                     <div>
                         <h1 className="text-xl font-bold text-gray-800">Godown Management</h1>
                         <p className="text-xs text-gray-500">Filter and view dispatch data by warehouse</p>
@@ -169,7 +169,7 @@ const Godown = () => {
                 <div className="flex items-center gap-3">
                     <button
                         onClick={handleRefresh}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200"
                     >
                         <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                         Refresh
@@ -180,7 +180,7 @@ const Godown = () => {
                             placeholder="Search..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                            className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded focus:ring-primary focus:border-primary"
                         />
                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
@@ -189,14 +189,13 @@ const Godown = () => {
                 </div>
             </div>
 
-            <div className="mb-6 flex flex-wrap gap-2">
+            <div className="mb-6 flex flex-wrap gap-2 max-w-[1200px] mx-auto">
                 {godownTabs.map((tab) => (
                     <button
                         key={tab}
                         onClick={() => setGodownFilter(tab)}
-                        className={`px-5 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                            godownFilter === tab ? 'bg-indigo-700 text-white border-indigo-700 shadow-md transform scale-105' : 'bg-white text-gray-600 border-gray-200 hover:bg-indigo-50'
-                        }`}
+                        className={`px-5 py-2 rounded text-sm font-semibold border transition-all ${godownFilter === tab ? 'bg-primary text-white border-primary shadow-md transform scale-105' : 'bg-white text-gray-600 border-gray-200 hover:bg-green-50'
+                            }`}
                     >
                         {tab === 'All' ? 'All Warehouses' : <span className="capitalize">{tab}</span>}
                         <span className={`ml-2 px-2 py-0.5 rounded-md text-[10px] ${godownFilter === tab ? 'bg-white/20' : 'bg-gray-100'}`}>
@@ -206,28 +205,32 @@ const Godown = () => {
                 ))}
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-white rounded shadow-sm border border-gray-200 overflow-hidden max-w-[1200px] mx-auto">
                 <div className="overflow-x-auto scrollbar-thin max-h-[500px]">
                     <table className="w-full text-left border-collapse min-w-[1200px]">
                         <thead>
                             <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10">
                                 {[
                                     { label: 'Dispatch No', key: 'dispatchNo' },
-                                    { label: 'Dispatch Date', key: 'dispatchDate' },
+                                    { label: 'Dispatch Date', key: 'dispatchDate', align: 'center' },
                                     { label: 'Order No', key: 'orderNo' },
                                     { label: 'Customer', key: 'customerName' },
                                     { label: 'Product', key: 'productName' },
-                                    { label: 'Order Qty', key: 'orderQty' },
-                                    { label: 'Dispatch Qty', key: 'dispatchQty' },
-                                    { label: 'Godown', key: 'godown' },
-                                    { label: 'GST', key: 'gstIncluded' }
+                                    { label: 'Order Qty', key: 'orderQty', align: 'right' },
+                                    { label: 'Dispatch Qty', key: 'dispatchQty', align: 'right' },
+                                    { label: 'Godown', key: 'godown', align: 'center' },
+                                    { label: 'GST', key: 'gstIncluded', align: 'center' }
                                 ].map((col) => (
-                                    <th key={col.key} className="px-4 py-3 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort(col.key)}>
-                                        <div className="flex items-center gap-1">
+                                    <th
+                                        key={col.key}
+                                        className={`px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left'}`}
+                                        onClick={() => requestSort(col.key)}
+                                    >
+                                        <div className={`flex items-center gap-1 ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : 'justify-start'}`}>
                                             {col.label}
                                             <div className="flex flex-col">
-                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-indigo-800' : 'text-gray-300'} />
-                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-indigo-800' : 'text-gray-300'} />
+                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-primary' : 'text-gray-300'} />
+                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-primary' : 'text-gray-300'} />
                                             </div>
                                         </div>
                                     </th>
@@ -237,15 +240,15 @@ const Godown = () => {
                         <tbody className="divide-y divide-gray-200 text-sm">
                             {filteredAndSortedItems.map((item, idx) => (
                                 <tr key={idx} className="hover:bg-gray-50">
-                                    <td className="px-4 py-3 font-semibold text-gray-900">{item.dispatchNo}</td>
-                                    <td className="px-4 py-3 text-gray-600 text-xs">{formatDisplayDate(item.dispatchDate)}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.orderNo}</td>
-                                    <td className="px-4 py-3 font-medium text-gray-800">{item.customerName}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.productName}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.orderQty}</td>
-                                    <td className="px-4 py-3 text-gray-600 font-bold text-indigo-800">{item.dispatchQty}</td>
-                                    <td className="px-4 py-3 text-gray-600 capitalize">{item.godown}</td>
-                                    <td className="px-4 py-3 text-gray-600">{item.gstIncluded}</td>
+                                    <td className="px-6 py-4 font-semibold text-gray-900">{item.dispatchNo}</td>
+                                    <td className="px-6 py-4 text-gray-600 text-xs text-center">{formatDisplayDate(item.dispatchDate)}</td>
+                                    <td className="px-6 py-4 text-gray-600">{item.orderNo}</td>
+                                    <td className="px-6 py-4 font-medium text-gray-800">{item.customerName}</td>
+                                    <td className="px-6 py-4 text-gray-600">{item.productName}</td>
+                                    <td className="px-6 py-4 text-gray-600 text-right">{item.orderQty}</td>
+                                    <td className="px-6 py-4 text-gray-600 font-bold text-primary text-right">{item.dispatchQty}</td>
+                                    <td className="px-6 py-4 text-gray-600 capitalize text-center">{item.godown}</td>
+                                    <td className="px-6 py-4 text-gray-600 text-center">{item.gstIncluded}</td>
                                 </tr>
                             ))}
                             {filteredAndSortedItems.length === 0 && (
@@ -258,10 +261,32 @@ const Godown = () => {
                 </div>
             </div>
             {isLoading && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/10 backdrop-blur-[1px]">
-                    <div className="bg-white p-6 rounded-2xl shadow-xl flex flex-col items-center gap-3">
-                        <Loader className="animate-spin text-indigo-700" size={32} />
-                        <p className="text-sm font-bold text-gray-700">Syncing Warehouse Data...</p>
+                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
+                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
+                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="relative">
+                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
+                                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
+                                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
+                            </div>
+                        </div>
+                        <div className="flex flex-col items-center text-center">
+                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
+                                Loading
+                                <span className="inline-flex ml-1">
+                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
+                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
+                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
+                                </span>
+                            </h3>
+                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
+                                Syncing Warehouse Data
+                            </p>
+                        </div>
                     </div>
                 </div>
             )}

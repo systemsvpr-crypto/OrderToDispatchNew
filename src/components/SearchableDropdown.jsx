@@ -8,7 +8,7 @@ const SearchableDropdown = ({
     placeholder = "Select...",
     allLabel = "All",
     className = "",
-    focusColor = "red-800",
+    focusColor = "primary",
     showAll = true
 }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -98,7 +98,7 @@ const SearchableDropdown = ({
             <button
                 type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-300 transition-all focus:ring-2 focus:ring-${focusColor} outline-none shadow-sm shadow-black/5`}
+                className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded text-sm font-medium text-gray-700 hover:border-gray-300 transition-all focus:ring-2 focus:ring-${focusColor === 'primary' ? 'primary' : focusColor} outline-none shadow-sm shadow-black/5`}
             >
                 <span className={`truncate ${!value && !showAll ? 'text-gray-400' : 'text-gray-700'}`}>
                     {displayValue}
@@ -119,12 +119,12 @@ const SearchableDropdown = ({
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 placeholder="Search..."
-                                className="w-full pl-9 pr-8 py-2 text-sm bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-gray-200 outline-none transition-all"
+                                className="w-full pl-9 pr-8 py-2 text-sm bg-white border border-gray-200 rounded focus:ring-2 focus:ring-gray-200 outline-none transition-all"
                             />
                             {searchTerm && (
                                 <button
                                     onClick={() => setSearchTerm('')}
-                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100 transition-colors"
                                 >
                                     <X size={14} />
                                 </button>
@@ -145,9 +145,9 @@ const SearchableDropdown = ({
                                     key={idx}
                                     type="button"
                                     onClick={() => handleSelect(opt)}
-                                    className={`w-full text-left px-3 py-2.5 text-sm rounded-lg transition-all mb-1 whitespace-normal ${isFocused ? `bg-${focusColor} text-white shadow-lg scale-[1.02] z-10` :
-                                            isSelected ? `bg-${focusColor}/10 text-${focusColor} font-bold border-l-4 border-${focusColor}` :
-                                                'text-gray-600 hover:bg-gray-50'
+                                    className={`w-full text-left px-3 py-2.5 text-sm rounded transition-all mb-1 whitespace-normal ${isFocused ? `bg-primary text-white shadow-lg scale-[1.02] z-10` :
+                                        isSelected ? `bg-primary/10 text-primary font-bold border-l-4 border-primary` :
+                                            'text-gray-600 hover:bg-gray-50'
                                         }`}
                                 >
                                     {label}

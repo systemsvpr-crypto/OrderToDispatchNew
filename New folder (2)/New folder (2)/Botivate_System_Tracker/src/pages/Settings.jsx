@@ -264,7 +264,7 @@ const Settings = () => {
             </div>
 
             {/* Users Table */}
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm overflow-x-auto">
+            <div className="bg-white border border-slate-200 rounded overflow-hidden shadow-sm overflow-x-auto">
                 <table className="w-full text-sm text-left">
                     <thead className="bg-slate-50 border-b border-slate-200">
                         <tr>
@@ -301,11 +301,11 @@ const Settings = () => {
                                 </td>
                                 <td className="px-4 py-3">
                                     {user.role === 'admin' ? (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200">
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200">
                                             <ShieldCheck size={11} /> Admin
                                         </span>
                                     ) : (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200">
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200">
                                             <UserIcon size={11} /> User
                                         </span>
                                     )}
@@ -316,14 +316,14 @@ const Settings = () => {
                                 <td className="px-4 py-3 text-right space-x-1 whitespace-nowrap">
                                     <button
                                         onClick={() => handleEditUserClick(idx, user)}
-                                        className="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg transition-colors inline-block"
+                                        className="p-1.5 text-sky-600 hover:bg-sky-50 rounded transition-colors inline-block"
                                         title="Edit User"
                                     >
                                         <Edit2 size={14} />
                                     </button>
                                     <button
                                         onClick={() => handleDeleteUserClick(idx, user.username)}
-                                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors inline-block"
+                                        className="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors inline-block"
                                         title="Delete User"
                                     >
                                         <Trash2 size={14} />
@@ -338,7 +338,7 @@ const Settings = () => {
             {/* Add / Edit User Modal */}
             {showAddUserModal && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
+                    <div className="bg-white rounded shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
                         {/* Modal Header */}
                         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                             <div>
@@ -351,7 +351,7 @@ const Settings = () => {
                             </div>
                             <button
                                 onClick={resetModalState}
-                                className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg hover:bg-slate-100"
+                                className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded hover:bg-slate-100"
                             >
                                 <X size={18} />
                             </button>
@@ -359,7 +359,7 @@ const Settings = () => {
 
                         <form onSubmit={handleAddUser} className="p-6 space-y-4">
                             {/* Basic Info */}
-                            <div className="bg-slate-50 p-4 rounded-lg border border-slate-100 space-y-3">
+                            <div className="bg-slate-50 p-4 rounded border border-slate-100 space-y-3">
                                 <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2">
                                     User Details
                                 </h4>
@@ -372,7 +372,7 @@ const Settings = () => {
                                             required
                                             value={newUser.name}
                                             onChange={handleInputChange}
-                                            className="w-full px-3 py-2 text-sm border border-sky-200 rounded-lg focus:outline-none focus:border-sky-500 bg-white"
+                                            className="w-full px-3 py-2 text-sm border border-sky-200 rounded focus:outline-none focus:border-sky-500 bg-white"
                                             placeholder="e.g. John Doe"
                                         />
                                     </div>
@@ -384,7 +384,7 @@ const Settings = () => {
                                             required
                                             value={newUser.username}
                                             onChange={handleInputChange}
-                                            className="w-full px-3 py-2 text-sm border border-sky-200 rounded-lg focus:outline-none focus:border-sky-500 bg-white"
+                                            className="w-full px-3 py-2 text-sm border border-sky-200 rounded focus:outline-none focus:border-sky-500 bg-white"
                                             placeholder="e.g. johndoe"
                                         />
                                     </div>
@@ -396,7 +396,7 @@ const Settings = () => {
                                             required
                                             value={newUser.password}
                                             onChange={handleInputChange}
-                                            className="w-full px-3 py-2 text-sm border border-sky-200 rounded-lg focus:outline-none focus:border-sky-500 bg-white"
+                                            className="w-full px-3 py-2 text-sm border border-sky-200 rounded focus:outline-none focus:border-sky-500 bg-white"
                                             placeholder="Enter password"
                                         />
                                     </div>
@@ -406,7 +406,7 @@ const Settings = () => {
                                             name="role"
                                             value={newUser.role}
                                             onChange={handleInputChange}
-                                            className="w-full px-3 py-2 text-sm border border-sky-200 rounded-lg focus:outline-none focus:border-sky-500 bg-white"
+                                            className="w-full px-3 py-2 text-sm border border-sky-200 rounded focus:outline-none focus:border-sky-500 bg-white"
                                         >
                                             <option value="user">User</option>
                                             <option value="admin">Admin</option>
@@ -416,7 +416,7 @@ const Settings = () => {
                             </div>
 
                             {/* Page Access */}
-                            <div className={`p-4 rounded-lg border space-y-2 ${newUser.role === 'admin' ? 'border-purple-200 bg-purple-50/50' : 'border-slate-100 bg-slate-50'}`}>
+                            <div className={`p-4 rounded border space-y-2 ${newUser.role === 'admin' ? 'border-purple-200 bg-purple-50/50' : 'border-slate-100 bg-slate-50'}`}>
                                 <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                                     <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                         Page Access
@@ -465,14 +465,14 @@ const Settings = () => {
                                     type="button"
                                     onClick={resetModalState}
                                     disabled={isSavingUser}
-                                    className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
+                                    className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded transition-colors"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={isSavingUser}
-                                    className="px-5 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 shadow-md shadow-sky-500/20 transition-all font-medium disabled:opacity-50 flex items-center gap-1.5"
+                                    className="px-5 py-2 bg-sky-500 text-white text-sm rounded hover:bg-sky-600 shadow-md shadow-sky-500/20 transition-all font-medium disabled:opacity-50 flex items-center gap-1.5"
                                 >
                                     {isSavingUser && <Loader2 className="animate-spin" size={14} />}
                                     {isSavingUser ? 'Saving…' : (isEditingUser ? 'Update User' : 'Save User')}
@@ -486,9 +486,9 @@ const Settings = () => {
             {/* ── Delete Confirmation Popup ── */}
             {deleteDialog?.phase === 'confirm' && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
+                    <div className="bg-white rounded shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
                         <div className="px-6 py-5 flex flex-col items-center text-center gap-3">
-                            <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center">
+                            <div className="w-12 h-12 rounded bg-red-50 flex items-center justify-center">
                                 <Trash2 size={22} className="text-red-500" />
                             </div>
                             <div>
@@ -521,14 +521,14 @@ const Settings = () => {
             {/* ── Delete Result Popup (Success / Error) ── */}
             {deleteDialog?.phase === 'result' && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
+                    <div className="bg-white rounded shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
                         <div className="px-6 py-5 flex flex-col items-center text-center gap-3">
                             {deleteDialog.type === 'success' ? (
-                                <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center">
+                                <div className="w-12 h-12 rounded bg-emerald-50 flex items-center justify-center">
                                     <CheckCircle2 size={24} className="text-emerald-500" />
                                 </div>
                             ) : (
-                                <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center">
+                                <div className="w-12 h-12 rounded bg-red-50 flex items-center justify-center">
                                     <XCircle size={24} className="text-red-500" />
                                 </div>
                             )}

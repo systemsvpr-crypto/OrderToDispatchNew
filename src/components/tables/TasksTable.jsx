@@ -27,7 +27,7 @@ import { Calendar, Flag, CheckCircle, Clock, AlertTriangle } from 'lucide-react'
  */
 const TasksTable = ({ tasks, isCompact = false, type = 'today' }) => {
   return (
-    <div className={`bg-white rounded-lg border border-gray-200 overflow-hidden ${isCompact ? 'max-h-96' : ''}`}>
+    <div className={`bg-white rounded border border-gray-200 overflow-hidden ${isCompact ? 'max-h-96' : ''}`}>
       <div className="overflow-x-auto">
         <div className={`min-w-full ${isCompact ? 'max-h-96 overflow-y-auto' : ''}`}>
           <table className="min-w-full divide-y divide-gray-200">
@@ -73,18 +73,17 @@ const TasksTable = ({ tasks, isCompact = false, type = 'today' }) => {
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     <div className="flex items-center">
-                      {task.status === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
-                      {task.status === 'in-progress' && <Clock className="w-4 h-4 text-blue-500" />}
+                      {task.status === 'completed' && <CheckCircle className="w-4 h-4 text-primary" />}
+                      {task.status === 'in-progress' && <Clock className="w-4 h-4 text-primary" />}
                       {task.status === 'pending' && <AlertTriangle className="w-4 h-4 text-amber-500" />}
                       <span className="ml-1.5 text-xs text-gray-700 capitalize">{task.status}</span>
                     </div>
                   </td>
                   <td className="hidden lg:table-cell px-3 py-2 whitespace-nowrap">
-                    <div className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                      task.priority === 'high' ? 'bg-red-100 text-red-800' :
+                    <div className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${task.priority === 'high' ? 'bg-red-100 text-primary' :
                       task.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-green-100 text-green-800'
-                    }`}>
+                        'bg-green-100 text-green-800'
+                      }`}>
                       <Flag className="w-3 h-3 mr-1" />
                       {task.priority}
                     </div>

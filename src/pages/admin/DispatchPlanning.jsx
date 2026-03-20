@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Save, History, ClipboardList, X, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
+import { useToast } from '../../contexts/ToastContext';
 
 const GODOWNS = ['Godown 1', 'Godown 2', 'Main Store', 'North Warehouse'];
 
@@ -46,6 +47,7 @@ const DispatchPlanning = () => {
     const [selectedRows, setSelectedRows] = useState({});
     const [editData, setEditData] = useState({});
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const { showToast } = useToast();
 
     const [searchTerm, setSearchTerm] = useState('');
     const [clientFilter, setClientFilter] = useState('');
@@ -74,12 +76,12 @@ const DispatchPlanning = () => {
                     orderNo: item.orderNumber,
                     qty: item.qty || 0
                 }));
-                
+
                 // Filter: Column Q is not null AND Column R is null AND Remaining Planning Qty > 0
                 newOrders = mappedData.filter(item => {
                     const hasQ = item.columnQ !== undefined && item.columnQ !== null && String(item.columnQ).trim() !== '';
                     const hasR = item.columnR !== undefined && item.columnR !== null && String(item.columnR).trim() !== '';
-                    
+
                     const pendingQty = parseFloat(String(getVal(item, 'planningPendingQty', 11) || '0').replace(/[^0-9.-]+/g, ''));
                     // Only show planned, un-finished items with positive pending quantity
                     return hasQ && !hasR && !isNaN(pendingQty) && pendingQty > 0;
@@ -150,7 +152,7 @@ const DispatchPlanning = () => {
     const allUniqueItems = useMemo(() => [...new Set([...orders.map(o => o.itemName), ...dispatchHistory.map(h => h.itemName)])].sort(), [orders, dispatchHistory]);
     const allUniqueDates = useMemo(() => {
         const rawDates = [...new Set([
-            ...orders.map(o => o.orderDate), 
+            ...orders.map(o => o.orderDate),
             ...dispatchHistory.map(h => h.orderDate)
         ])].filter(Boolean).sort((a, b) => new Date(b) - new Date(a));
         return rawDates.map(d => formatDisplayDate(d));
@@ -245,7 +247,7 @@ const DispatchPlanning = () => {
         setSelectedRows(prev => {
             const isSelected = !prev[idx];
             const next = { ...prev, [idx]: isSelected };
-            
+
             if (isSelected) {
                 setEditData(prevEdit => ({
                     ...prevEdit,
@@ -276,7 +278,7 @@ const DispatchPlanning = () => {
 
     const handleSave = useCallback(async () => {
         const rowsToSubmit = [];
-        
+
         Object.keys(selectedRows).forEach((idx) => {
             if (selectedRows[idx]) {
                 const order = orders.find(o => String(o.originalIndex) === String(idx));
@@ -298,10 +300,9 @@ const DispatchPlanning = () => {
 
         setIsLoading(true);
         try {
-            await fetch(API_URL, {
+            const response = await fetch(API_URL, {
                 method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify({
                     sheetId: import.meta.env.VITE_orderToDispatch_SHEET_ID,
                     sheet: "Planning",
@@ -309,15 +310,20 @@ const DispatchPlanning = () => {
                 })
             });
 
-            alert('Planning saved successfully!');
-            // Invalidate cache and refetch
-            sessionStorage.removeItem(CACHE_KEY);
-            await fetchOrders();
-            setSelectedRows({});
-            setEditData({});
+            const result = await response.json();
+            if (result.success) {
+                showToast('Planning saved successfully!', 'success');
+                // Invalidate cache and refetch
+                sessionStorage.removeItem(CACHE_KEY);
+                await fetchOrders();
+                setSelectedRows({});
+                setEditData({});
+            } else {
+                showToast(`Error saving: ${result.error || 'Unknown error'}`, 'error');
+            }
         } catch (error) {
             console.error('Save failed:', error);
-            alert('Failed to save planning. Please check console.');
+            showToast(`Failed to save planning: ${error.message}`, 'error');
         } finally {
             setIsLoading(false);
         }
@@ -349,23 +355,23 @@ const DispatchPlanning = () => {
     return (
         <div className="p-3 sm:p-6 lg:p-8">
             {/* Header Row with Title, Tabs, Filters, and Actions */}
-            <div className="flex flex-col gap-4 mb-6 bg-white p-4 lg:p-5 rounded-xl shadow-sm border border-gray-100">
+            <div className="flex flex-col gap-4 mb-6 bg-white p-4 lg:p-5 rounded shadow-sm border border-white/50 max-w-[1200px] mx-auto">
                 {/* Top Section: Title & Tabs & Actions */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex flex-wrap items-center gap-4">
                         <h1 className="text-xl font-bold text-gray-800 tracking-tight">Dispatch Planning</h1>
 
-                        <div className="flex bg-gray-100 p-1 rounded-lg">
+                        <div className="flex bg-gray-100 p-1 rounded">
                             <button
                                 onClick={() => setActiveTab('pending')}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'pending' ? 'bg-white text-red-800 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'pending' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
                             >
                                 <ClipboardList size={16} />
                                 Pending
                             </button>
                             <button
                                 onClick={() => setActiveTab('history')}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'history' ? 'bg-white text-red-800 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
                             >
                                 <History size={16} />
                                 History
@@ -378,7 +384,7 @@ const DispatchPlanning = () => {
                         <button
                             onClick={handleRefresh}
                             disabled={isLoading}
-                            className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
+                            className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                         >
                             <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                             Refresh
@@ -387,25 +393,25 @@ const DispatchPlanning = () => {
                         {(searchTerm || clientFilter || godownFilter || orderNoFilter || itemFilter || dateFilter || stockLocationFilter) && (
                             <button
                                 onClick={clearFilters}
-                                className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-xs font-bold border border-red-100"
+                                className="flex items-center gap-1.5 px-3 py-2 bg-green-50 text-primary rounded hover:bg-green-100 transition-colors text-xs font-bold border border-green-100"
                             >
                                 <X size={14} />
                                 Clear Filters
                             </button>
                         )}
-                        
+
                         {activeTab === 'pending' && Object.values(selectedRows).some(v => v) && (
                             <div className="flex items-center gap-2 sm:border-l sm:border-gray-200 sm:pl-3">
                                 <button
                                     onClick={handleCancelSelection}
-                                    className="flex items-center gap-2 px-3 py-2 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-bold text-[13px] border border-gray-200"
+                                    className="flex items-center gap-2 px-3 py-2 bg-white text-gray-700 rounded hover:bg-gray-50 transition-colors font-bold text-[13px] border border-gray-200"
                                 >
                                     <X size={14} />
                                     Cancel
                                 </button>
                                 <button
                                     onClick={handleSave}
-                                    className="flex items-center gap-2 px-3 py-2 bg-red-800 text-white rounded-lg hover:bg-red-900 shadow-md font-bold text-[13px]"
+                                    className="flex items-center gap-2 px-3 py-2 bg-primary text-white rounded hover:bg-primary-hover shadow-md font-bold text-[13px]"
                                 >
                                     <Save size={14} />
                                     Save
@@ -422,7 +428,7 @@ const DispatchPlanning = () => {
                         placeholder="Search..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-800 focus:border-transparent outline-none text-sm transition-all"
+                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded focus:ring-primary focus:border-primary"
                     />
                     <SearchableDropdown
                         value={clientFilter}
@@ -444,7 +450,7 @@ const DispatchPlanning = () => {
                         options={allUniqueOrderNos}
                         allLabel="All Order No"
                         className="w-full"
-                        focusColor="red-800"
+                        focusColor="primary"
                     />
                     <SearchableDropdown
                         value={itemFilter}
@@ -452,7 +458,7 @@ const DispatchPlanning = () => {
                         options={allUniqueItems}
                         allLabel="All Items"
                         className="w-full"
-                        focusColor="red-800"
+                        focusColor="primary"
                     />
                     <SearchableDropdown
                         value={dateFilter}
@@ -460,7 +466,7 @@ const DispatchPlanning = () => {
                         options={allUniqueDates}
                         allLabel="All Dates"
                         className="w-full"
-                        focusColor="red-800"
+                        focusColor="primary"
                     />
                     <SearchableDropdown
                         value={stockLocationFilter}
@@ -468,29 +474,70 @@ const DispatchPlanning = () => {
                         options={allUniqueStockLocs}
                         allLabel="Stock Loc"
                         className="w-full"
-                        focusColor="green-600"
+                        focusColor="primary"
                     />
                 </div>
             </div>
 
             {isLoading && (
-                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/20 backdrop-blur-[2px]">
-                    <div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4 border border-gray-100">
+                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
+                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
+                        {/* Decorative background elements */}
+                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+
                         <div className="relative">
-                            <div className="h-16 w-16 rounded-full border-4 border-gray-100 border-t-red-800 animate-spin"></div>
+                            {/* Modern SVG Spinner */}
+                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
+                                <circle
+                                    className="opacity-20"
+                                    cx="25"
+                                    cy="25"
+                                    r="20"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                    style={{ color: 'var(--primary, #58cc02)' }}
+                                />
+                                <circle
+                                    className="opacity-100"
+                                    cx="25"
+                                    cy="25"
+                                    r="20"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                    strokeDasharray="80"
+                                    strokeDashoffset="60"
+                                    strokeLinecap="round"
+                                    style={{ color: 'var(--primary, #58cc02)' }}
+                                />
+                            </svg>
+                            
+                            {/* Inner Pulsing Dot */}
                             <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="h-8 w-8 rounded-full border-4 border-gray-100 border-b-red-800 animate-spin-slow"></div>
+                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
                             </div>
                         </div>
-                        <div className="flex flex-col items-center">
-                            <p className="text-sm font-black text-gray-800 uppercase tracking-[0.2em]">Loading</p>
-                            <p className="text-[10px] text-gray-400 font-bold uppercase mt-1">Fetching Planning Data</p>
+
+                        <div className="flex flex-col items-center text-center">
+                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
+                                Loading
+                                <span className="inline-flex ml-1">
+                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
+                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
+                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
+                                </span>
+                            </h3>
+                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
+                                Fetching Planning Data
+                            </p>
                         </div>
                     </div>
                 </div>
             )}
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-white rounded shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/50 overflow-hidden max-w-[1200px] mx-auto">
                 {activeTab === 'pending' ? (
                     <>
                         {/* Desktop Table */}
@@ -498,50 +545,50 @@ const DispatchPlanning = () => {
                             <table className="w-full text-left border-collapse min-w-[1400px]">
                                 <thead>
                                     <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10 shadow-sm">
-                                        <th className="px-4 py-3">Action</th>
+                                        <th className="px-6 py-4 text-center">Action</th>
                                         {isAnySelected && (
                                             <>
-                                                <th className="px-4 py-3 animate-column">Dispatch Qty</th>
-                                                <th className="px-4 py-3 animate-column">Dispatch Date</th>
-                                                <th className="px-4 py-3 animate-column">GST</th>
-                                                <th className="px-4 py-3 animate-column">Dispatch Godown</th>
+                                                <th className="px-6 py-4 animate-column text-right">Dispatch Qty</th>
+                                                <th className="px-6 py-4 animate-column text-center">Dispatch Date</th>
+                                                <th className="px-6 py-4 animate-column text-center">GST</th>
+                                                <th className="px-6 py-4 animate-column text-center">Dispatch Godown</th>
                                             </>
                                         )}
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('orderNo')}>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('orderNo')}>
                                             <div className="flex items-center gap-1">Order No <SortIcon column="orderNo" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('orderDate')}>
-                                            <div className="flex items-center gap-1">Order Date <SortIcon column="orderDate" sortConfig={sortConfig} /></div>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-center" onClick={() => requestSort('orderDate')}>
+                                            <div className="flex items-center gap-1 justify-center">Order Date <SortIcon column="orderDate" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('clientName')}>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('clientName')}>
                                             <div className="flex items-center gap-1">Client Name <SortIcon column="clientName" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('godownName')}>
-                                            <div className="flex items-center gap-1">Godown <SortIcon column="godownName" sortConfig={sortConfig} /></div>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-center" onClick={() => requestSort('godownName')}>
+                                            <div className="flex items-center gap-1 justify-center">Godown <SortIcon column="godownName" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('itemName')}>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('itemName')}>
                                             <div className="flex items-center gap-1">Item Name <SortIcon column="itemName" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('rate')}>
-                                            <div className="flex items-center gap-1">Rate <SortIcon column="rate" sortConfig={sortConfig} /></div>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-right" onClick={() => requestSort('rate')}>
+                                            <div className="flex items-center gap-1 justify-end">Rate <SortIcon column="rate" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100 text-center" onClick={() => requestSort('qty')}>
-                                            <div className="flex items-center gap-1 justify-center">Order Qty <SortIcon column="qty" sortConfig={sortConfig} /></div>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-right" onClick={() => requestSort('qty')}>
+                                            <div className="flex items-center gap-1 justify-end">Order Qty <SortIcon column="qty" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('currentStock')}>
-                                            <div className="flex items-center gap-1">Current Stock <SortIcon column="currentStock" sortConfig={sortConfig} /></div>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-right" onClick={() => requestSort('currentStock')}>
+                                            <div className="flex items-center gap-1 justify-end">Current Stock <SortIcon column="currentStock" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('intransitQty')}>
-                                            <div className="flex items-center gap-1">Intransit Qty <SortIcon column="intransitQty" sortConfig={sortConfig} /></div>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-right" onClick={() => requestSort('intransitQty')}>
+                                            <div className="flex items-center gap-1 justify-end">Intransit Qty <SortIcon column="intransitQty" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('planningQty')}>
-                                            <div className="flex items-center gap-1">Planning Qty <SortIcon column="planningQty" sortConfig={sortConfig} /></div>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-right" onClick={() => requestSort('planningQty')}>
+                                            <div className="flex items-center gap-1 justify-end">Planning Qty <SortIcon column="planningQty" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('planningPendingQty')}>
-                                            <div className="flex items-center gap-1">Remaining Planing Qty <SortIcon column="planningPendingQty" sortConfig={sortConfig} /></div>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-right" onClick={() => requestSort('planningPendingQty')}>
+                                            <div className="flex items-center gap-1 justify-end">Remaining Planing Qty <SortIcon column="planningPendingQty" sortConfig={sortConfig} /></div>
                                         </th>
-                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => requestSort('qtyDelivered')}>
-                                            <div className="flex items-center gap-1">Qty Delivered <SortIcon column="qtyDelivered" sortConfig={sortConfig} /></div>
+                                        <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-right" onClick={() => requestSort('qtyDelivered')}>
+                                            <div className="flex items-center gap-1 justify-end">Qty Delivered <SortIcon column="qtyDelivered" sortConfig={sortConfig} /></div>
                                         </th>
                                     </tr>
                                 </thead>
@@ -549,47 +596,47 @@ const DispatchPlanning = () => {
                                     {filteredAndSortedOrders.map((order) => {
                                         const realIdx = order.originalIndex;
                                         return (
-                                            <tr key={`${order.orderNo}-${realIdx}`} className={`${selectedRows[realIdx] ? 'bg-red-50/50' : 'hover:bg-gray-50'} transition-colors`}>
-                                                <td className="px-4 py-3">
+                                            <tr key={`${order.orderNo}-${realIdx}`} className={`${selectedRows[realIdx] ? 'bg-green-50/50' : 'hover:bg-gray-50'} transition-colors`}>
+                                                <td className="px-6 py-4 text-center">
                                                     <input
                                                         type="checkbox"
                                                         checked={!!selectedRows[realIdx]}
                                                         onChange={() => handleCheckboxToggle(realIdx, order)}
-                                                        className="rounded text-red-800 focus:ring-red-800 w-4 h-4 cursor-pointer"
+                                                        className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
                                                     />
                                                 </td>
                                                 {isAnySelected && (
                                                     <>
-                                                        <td className="px-4 py-3 animate-column">
+                                                        <td className="px-6 py-4 animate-column text-right">
                                                             {selectedRows[realIdx] ? (
                                                                 <input
                                                                     type="number"
                                                                     value={editData[realIdx]?.dispatchQty || ''}
                                                                     onChange={(e) => handleEditChange(realIdx, 'dispatchQty', e.target.value)}
-                                                                    className="w-20 px-2 py-1 border rounded text-xs outline-none focus:border-red-800"
+                                                                    className="w-20 px-2 py-1 border rounded text-xs outline-none focus:border-primary text-right"
                                                                 />
                                                             ) : (
                                                                 <span className="text-gray-400">-</span>
                                                             )}
                                                         </td>
-                                                        <td className="px-4 py-3 animate-column">
+                                                        <td className="px-6 py-4 animate-column text-center">
                                                             {selectedRows[realIdx] ? (
                                                                 <input
                                                                     type="date"
                                                                     value={editData[realIdx]?.dispatchDate || ''}
                                                                     onChange={(e) => handleEditChange(realIdx, 'dispatchDate', e.target.value)}
-                                                                    className="px-2 py-1 border rounded text-xs outline-none focus:border-red-800"
+                                                                    className="px-2 py-1 border rounded text-xs outline-none focus:border-primary"
                                                                 />
                                                             ) : (
                                                                 <span className="text-gray-400">-</span>
                                                             )}
                                                         </td>
-                                                        <td className="px-4 py-3 animate-column">
+                                                        <td className="px-6 py-4 animate-column text-center">
                                                             {selectedRows[realIdx] ? (
                                                                 <select
                                                                     value={editData[realIdx]?.gstIncluded || ''}
                                                                     onChange={(e) => handleEditChange(realIdx, 'gstIncluded', e.target.value)}
-                                                                    className="px-2 py-1 border rounded text-xs outline-none focus:border-red-800"
+                                                                    className="px-2 py-1 border rounded text-xs outline-none focus:border-primary"
                                                                 >
                                                                     <option value="Yes">Yes</option>
                                                                     <option value="No">No</option>
@@ -598,12 +645,12 @@ const DispatchPlanning = () => {
                                                                 <span className="text-gray-400">-</span>
                                                             )}
                                                         </td>
-                                                        <td className="px-4 py-3 animate-column">
+                                                        <td className="px-6 py-4 animate-column text-center">
                                                             {selectedRows[realIdx] ? (
                                                                 <select
                                                                     value={editData[realIdx]?.godownName || order.godownName}
                                                                     onChange={(e) => handleEditChange(realIdx, 'godownName', e.target.value)}
-                                                                    className="px-2 py-1 border rounded text-xs outline-none focus:border-red-800 w-full"
+                                                                    className="px-2 py-1 border rounded text-xs outline-none focus:border-primary w-full"
                                                                 >
                                                                     {[...new Set([...GODOWNS, order.godownName])].map(g => (
                                                                         <option key={g} value={g}>{g}</option>
@@ -615,18 +662,18 @@ const DispatchPlanning = () => {
                                                         </td>
                                                     </>
                                                 )}
-                                                <td className="px-4 py-3">{order.orderNo}</td>
-                                                <td className="px-4 py-3">{formatDisplayDate(order.orderDate)}</td>
-                                                <td className="px-4 py-3">{order.clientName}</td>
-                                                <td className="px-4 py-3">{order.godownName}</td>
-                                                <td className="px-4 py-3">{order.itemName}</td>
-                                                <td className="px-4 py-3">{order.rate}</td>
-                                                <td className="px-4 py-3 text-center font-bold text-red-800">{order.qty}</td>
-                                                <td className="px-4 py-3 text-xs font-medium text-gray-700">{order.currentStock || '-'}</td>
-                                                <td className="px-4 py-3 text-center font-medium text-gray-700">{order.intransitQty || '0'}</td>
-                                                <td className="px-4 py-3 text-center font-medium text-gray-700">{order.planningQty || '0'}</td>
-                                                <td className="px-4 py-3 text-center font-medium text-gray-700">{order.planningPendingQty || '0'}</td>
-                                                <td className="px-4 py-3 text-center font-medium text-gray-700">{order.qtyDelivered || '0'}</td>
+                                                <td className="px-6 py-4">{order.orderNo}</td>
+                                                <td className="px-6 py-4 text-center">{formatDisplayDate(order.orderDate)}</td>
+                                                <td className="px-6 py-4">{order.clientName}</td>
+                                                <td className="px-6 py-4 text-center">{order.godownName}</td>
+                                                <td className="px-6 py-4">{order.itemName}</td>
+                                                <td className="px-6 py-4 text-right">{order.rate}</td>
+                                                <td className="px-6 py-4 text-right font-bold text-primary">{order.qty}</td>
+                                                <td className="px-6 py-4 text-right text-xs font-medium text-gray-700">{order.currentStock || '-'}</td>
+                                                <td className="px-6 py-4 text-right font-medium text-gray-700">{order.intransitQty || '0'}</td>
+                                                <td className="px-6 py-4 text-right font-medium text-gray-700">{order.planningQty || '0'}</td>
+                                                <td className="px-6 py-4 text-right font-medium text-gray-700">{order.planningPendingQty || '0'}</td>
+                                                <td className="px-6 py-4 text-right font-medium text-gray-700">{order.qtyDelivered || '0'}</td>
                                             </tr>
                                         );
                                     })}
@@ -644,14 +691,14 @@ const DispatchPlanning = () => {
                             {filteredAndSortedOrders.map((order) => {
                                 const realIdx = order.originalIndex;
                                 return (
-                                    <div key={`${order.orderNo}-${realIdx}`} className={`p-4 space-y-4 ${selectedRows[realIdx] ? 'bg-red-50/30' : 'bg-white'}`}>
+                                    <div key={`${order.orderNo}-${realIdx}`} className={`p-4 space-y-4 ${selectedRows[realIdx] ? 'bg-green-50/30' : 'bg-white'}`}>
                                         <div className="flex justify-between items-start">
                                             <div className="flex items-start gap-3">
                                                 <input
                                                     type="checkbox"
                                                     checked={!!selectedRows[realIdx]}
                                                     onChange={() => handleCheckboxToggle(realIdx, order)}
-                                                    className="mt-1 rounded text-red-800 focus:ring-red-800 w-5 h-5"
+                                                    className="mt-1 rounded text-primary focus:ring-primary w-5 h-5"
                                                 />
                                                 <div>
                                                     <h4 className="text-sm font-bold text-gray-900">{order.clientName}</h4>
@@ -661,42 +708,42 @@ const DispatchPlanning = () => {
                                         </div>
 
                                         {selectedRows[realIdx] && (
-                                            <div className="grid grid-cols-2 gap-3 bg-red-50/50 p-3 rounded-lg border border-red-100">
+                                            <div className="grid grid-cols-2 gap-3 bg-green-50/50 p-3 rounded border border-green-100">
                                                 <div className="col-span-2">
-                                                    <label className="block text-[10px] font-bold text-red-800 mb-1 uppercase">Dispatch Date</label>
+                                                    <label className="block text-[10px] font-bold text-primary mb-1 uppercase">Dispatch Date</label>
                                                     <input
                                                         type="date"
                                                         value={editData[realIdx]?.dispatchDate || ''}
                                                         onChange={(e) => handleEditChange(realIdx, 'dispatchDate', e.target.value)}
-                                                        className="w-full px-3 py-1.5 border border-red-200 rounded text-xs outline-none focus:border-red-800 bg-white"
+                                                        className="w-full px-3 py-1.5 border border-green-200 rounded text-xs outline-none focus:border-primary bg-white"
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-[10px] font-bold text-red-800 mb-1 uppercase">Disp Qty</label>
+                                                    <label className="block text-[10px] font-bold text-primary mb-1 uppercase">Disp Qty</label>
                                                     <input
                                                         type="number"
                                                         value={editData[realIdx]?.dispatchQty || ''}
                                                         onChange={(e) => handleEditChange(realIdx, 'dispatchQty', e.target.value)}
-                                                        className="w-full px-3 py-1.5 border border-red-200 rounded text-xs outline-none focus:border-red-800 bg-white"
+                                                        className="w-full px-3 py-1.5 border border-green-200 rounded text-xs outline-none focus:border-primary bg-white"
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-[10px] font-bold text-red-800 mb-1 uppercase">GST</label>
+                                                    <label className="block text-[10px] font-bold text-primary mb-1 uppercase">GST</label>
                                                     <select
                                                         value={editData[realIdx]?.gstIncluded || ''}
                                                         onChange={(e) => handleEditChange(realIdx, 'gstIncluded', e.target.value)}
-                                                        className="w-full px-3 py-1.5 border border-red-200 rounded text-xs outline-none focus:border-red-800 bg-white"
+                                                        className="w-full px-3 py-1.5 border border-green-200 rounded text-xs outline-none focus:border-primary bg-white"
                                                     >
                                                         <option value="Yes">Yes</option>
                                                         <option value="No">No</option>
                                                     </select>
                                                 </div>
                                                 <div className="col-span-2">
-                                                    <label className="block text-[10px] font-bold text-red-800 mb-1 uppercase">Godown Name</label>
+                                                    <label className="block text-[10px] font-bold text-primary mb-1 uppercase">Godown Name</label>
                                                     <select
                                                         value={editData[realIdx]?.godownName || order.godownName}
                                                         onChange={(e) => handleEditChange(realIdx, 'godownName', e.target.value)}
-                                                        className="w-full px-3 py-1.5 border border-red-200 rounded text-xs outline-none focus:border-red-800 bg-white"
+                                                        className="w-full px-3 py-1.5 border border-green-200 rounded text-xs outline-none focus:border-primary bg-white"
                                                     >
                                                         {[...new Set([...GODOWNS, order.godownName])].map(g => (
                                                             <option key={g} value={g}>{g}</option>
@@ -713,7 +760,7 @@ const DispatchPlanning = () => {
                                             </div>
                                             <div>
                                                 <p className="uppercase text-[8px] font-bold text-gray-400">Order Qty</p>
-                                                <p className="font-bold text-red-800">{order.qty}</p>
+                                                <p className="font-bold text-primary">{order.qty}</p>
                                             </div>
                                             <div>
                                                 <p className="uppercase text-[8px] font-bold text-gray-400">Godown</p>
@@ -758,22 +805,22 @@ const DispatchPlanning = () => {
                                         {[
                                             { label: 'Order No', key: 'orderNo' },
                                             { label: 'Dispatch No', key: 'dispatchNo' },
-                                            { label: 'Disp Qty', key: 'dispatchQty' },
-                                            { label: 'Disp Date', key: 'dispatchDate' },
-                                            { label: 'GST', key: 'gstIncluded' },
+                                            { label: 'Disp Qty', key: 'dispatchQty', align: 'right' },
+                                            { label: 'Disp Date', key: 'dispatchDate', align: 'center' },
+                                            { label: 'GST', key: 'gstIncluded', align: 'center' },
                                             { label: 'Client', key: 'clientName' },
-                                            { label: 'Godown', key: 'godownName' },
-                                            { label: 'Order Date', key: 'orderDate' },
+                                            { label: 'Godown', key: 'godownName', align: 'center' },
+                                            { label: 'Order Date', key: 'orderDate', align: 'center' },
                                             { label: 'Item Name', key: 'itemName' },
-                                            { label: 'Rate', key: 'rate' },
-                                            { label: 'Qty', key: 'qty', align: 'center' }
+                                            { label: 'Rate', key: 'rate', align: 'right' },
+                                            { label: 'Qty', key: 'qty', align: 'right' }
                                         ].map((col) => (
                                             <th
                                                 key={col.key}
-                                                className={`px-4 py-3 cursor-pointer hover:bg-gray-100 transition-colors ${col.align === 'center' ? 'text-center' : ''}`}
+                                                className={`px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left'}`}
                                                 onClick={() => requestSort(col.key)}
                                             >
-                                                <div className={`flex items-center gap-1 ${col.align === 'center' ? 'justify-center' : ''}`}>
+                                                <div className={`flex items-center gap-1 ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : 'justify-start'}`}>
                                                     {col.label}
                                                     <SortIcon column={col.key} sortConfig={sortConfig} />
                                                 </div>
@@ -784,17 +831,17 @@ const DispatchPlanning = () => {
                                 <tbody className="divide-y divide-gray-200 text-sm italic">
                                     {filteredAndSortedHistory.map((item, idx) => (
                                         <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                                            <td className="px-4 py-3">{item.orderNo}</td>
-                                            <td className="px-4 py-3 font-bold text-red-800">{item.dispatchNo}</td>
-                                            <td className="px-4 py-3 font-semibold">{item.dispatchQty}</td>
-                                            <td className="px-4 py-3">{formatDisplayDate(item.dispatchDate)}</td>
-                                            <td className="px-4 py-3">{item.gstIncluded}</td>
-                                            <td className="px-4 py-3">{item.clientName}</td>
-                                            <td className="px-4 py-3">{item.godownName}</td>
-                                            <td className="px-4 py-3">{formatDisplayDate(item.orderDate)}</td>
-                                            <td className="px-4 py-3">{item.itemName}</td>
-                                            <td className="px-4 py-3">{item.rate}</td>
-                                            <td className="px-4 py-3 text-center font-bold">{item.qty}</td>
+                                            <td className="px-6 py-4">{item.orderNo}</td>
+                                            <td className="px-6 py-4 font-bold text-primary">{item.dispatchNo}</td>
+                                            <td className="px-6 py-4 font-semibold text-right">{item.dispatchQty}</td>
+                                            <td className="px-6 py-4 text-center">{formatDisplayDate(item.dispatchDate)}</td>
+                                            <td className="px-6 py-4 text-center">{item.gstIncluded}</td>
+                                            <td className="px-6 py-4">{item.clientName}</td>
+                                            <td className="px-6 py-4 text-center">{item.godownName}</td>
+                                            <td className="px-6 py-4 text-center">{formatDisplayDate(item.orderDate)}</td>
+                                            <td className="px-6 py-4">{item.itemName}</td>
+                                            <td className="px-6 py-4 text-right">{item.rate}</td>
+                                            <td className="px-6 py-4 text-right font-bold">{item.qty}</td>
                                         </tr>
                                     ))}
                                     {filteredAndSortedHistory.length === 0 && (
@@ -808,7 +855,7 @@ const DispatchPlanning = () => {
                                 <div key={idx} className="p-4 space-y-3 bg-white">
                                     <div className="flex justify-between items-start">
                                         <div>
-                                            <p className="text-[10px] font-bold text-red-800 uppercase leading-none mb-1">{item.dispatchNo}</p>
+                                            <p className="text-[10px] font-bold text-primary uppercase leading-none mb-1">{item.dispatchNo}</p>
                                             <h4 className="text-sm font-bold text-gray-900 leading-tight">{item.clientName}</h4>
                                         </div>
                                     </div>
@@ -819,7 +866,7 @@ const DispatchPlanning = () => {
                                         </div>
                                         <div className="flex justify-between border-b border-gray-50 pb-1">
                                             <span className="text-gray-400">Disp Qty</span>
-                                            <span className="font-bold text-red-800">{item.dispatchQty}</span>
+                                            <span className="font-bold text-primary">{item.dispatchQty}</span>
                                         </div>
                                         <div className="flex justify-between border-b border-gray-50 pb-1">
                                             <span className="text-gray-400">Disp Date</span>
@@ -844,14 +891,8 @@ const DispatchPlanning = () => {
                 )}
             </div>
 
-            <style dangerouslySetInnerHTML={{__html: `
-              @keyframes spin-slow {
-                from { transform: rotate(0deg); }
-                to { transform: rotate(-360deg); }
-              }
-              .animate-spin-slow {
-                animation: spin-slow 3s linear infinite;
-              }
+            <style dangerouslySetInnerHTML={{
+                __html: `
               @keyframes fadeIn {
                 from { opacity: 0; transform: translateX(-10px); }
                 to { opacity: 1; transform: translateX(0); }
@@ -867,8 +908,8 @@ const DispatchPlanning = () => {
 // Helper component for sort icons
 const SortIcon = ({ column, sortConfig }) => (
     <div className="flex flex-col">
-        <ChevronUp size={10} className={sortConfig.key === column && sortConfig.direction === 'asc' ? 'text-red-800' : 'text-gray-300'} />
-        <ChevronDown size={10} className={sortConfig.key === column && sortConfig.direction === 'desc' ? 'text-red-800' : 'text-gray-300'} />
+        <ChevronUp size={10} className={sortConfig.key === column && sortConfig.direction === 'asc' ? 'text-primary' : 'text-gray-300'} />
+        <ChevronDown size={10} className={sortConfig.key === column && sortConfig.direction === 'desc' ? 'text-primary' : 'text-gray-300'} />
     </div>
 );
 

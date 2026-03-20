@@ -48,16 +48,16 @@ const CACHE_KEY = 'dashboardAnalyticsData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const getVal = (obj, ...possibleKeys) => {
-    if (!obj || typeof obj !== 'object') return null;
-    for (const key of possibleKeys) {
-        if (typeof key === 'number') {
-            const vals = Object.values(obj);
-            if (vals[key] !== undefined) return vals[key];
-        } else if (obj[key] !== undefined) {
-            return obj[key];
-        }
+  if (!obj || typeof obj !== 'object') return null;
+  for (const key of possibleKeys) {
+    if (typeof key === 'number') {
+      const vals = Object.values(obj);
+      if (vals[key] !== undefined) return vals[key];
+    } else if (obj[key] !== undefined) {
+      return obj[key];
     }
-    return null;
+  }
+  return null;
 };
 
 const Dashboard = () => {
@@ -115,20 +115,20 @@ const Dashboard = () => {
   // Sync state changes to cache
   useEffect(() => {
     if (!loading && (stats.orderQtySum > 0 || allMonthlyMap.months.length > 0)) {
-        // Deep serialize: Convert nested Maps to entries arrays for JSON serialization
-        const serializedTrends = {
-            months: allMonthlyMap.months,
-            clientData: Array.from(allMonthlyMap.clientData.entries()).map(([client, monthMap]) => [
-                client,
-                Array.from(monthMap.entries())
-            ])
-        };
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-            stats,
-            trim: serializedTrends,
-            godown: godownLoad,
-            timestamp: Date.now()
-        }));
+      // Deep serialize: Convert nested Maps to entries arrays for JSON serialization
+      const serializedTrends = {
+        months: allMonthlyMap.months,
+        clientData: Array.from(allMonthlyMap.clientData.entries()).map(([client, monthMap]) => [
+          client,
+          Array.from(monthMap.entries())
+        ])
+      };
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+        stats,
+        trim: serializedTrends,
+        godown: godownLoad,
+        timestamp: Date.now()
+      }));
     }
   }, [stats, allMonthlyMap, godownLoad, loading]);
 
@@ -137,15 +137,17 @@ const Dashboard = () => {
     return isNaN(num) ? 0 : num;
   };
 
-  const countStage = (items, pendingCol, completedCol) => {
+  const countStage = (items, pendingCol, completedCols) => {
     let pending = 0;
     let completed = 0;
+    const compCols = Array.isArray(completedCols) ? completedCols : [completedCols];
+
     items.forEach(item => {
-      const pendingVal = (item[pendingCol] || '').toString().trim();
-      const completedVal = (item[completedCol] || '').toString().trim();
-      if (completedVal !== '') {
+      const isCompleted = compCols.every(col => (item[col] || '').toString().trim() !== '');
+
+      if (isCompleted) {
         completed++;
-      } else if (pendingVal !== '') {
+      } else {
         pending++;
       }
     });
@@ -183,9 +185,12 @@ const Dashboard = () => {
         const orders = orderResult.data.slice(5); // adjust slicing if needed
 
         // Sums for the four cards
-        const orderQtySum = orders.reduce((sum, item) => sum + safeNumber(item.qty), 0);
+        const orderQtySum = orders.reduce((sum, item) => sum + safeNumber(getVal(item, 'planningQty', 10)), 0);
         const cancelQtySum = orders.reduce((sum, item) => sum + safeNumber(item.cancelQty), 0);
-        const remainingQtySum = orders.reduce((sum, item) => sum + safeNumber(item.planningPendingQty), 0);
+        const remainingQtySum = orders.reduce((sum, item) => {
+          const val = safeNumber(getVal(item, 'planningPendingQty', 11));
+          return sum + (val > 0 ? val : 0);
+        }, 0);
         const deliveredQtySum = orders.reduce((sum, item) => sum + safeNumber(item.qtyDelivered), 0);
 
         // Stage 1 counts (columns Q & R)
@@ -205,26 +210,26 @@ const Dashboard = () => {
                 monthlyMap.set(monthKey, new Map());
               }
               const clientMonthMap = monthlyMap.get(monthKey);
-              const data = clientMonthMap.get(client) || { 
-                  qty: 0, 
-                  planningQty: 0, 
-                  remainingQty: 0, 
-                  deliveredQty: 0, 
-                  cancelQty: 0, 
-                  completedCount: 0 
+              const data = clientMonthMap.get(client) || {
+                qty: 0,
+                planningQty: 0,
+                remainingQty: 0,
+                deliveredQty: 0,
+                cancelQty: 0,
+                completedCount: 0
               };
-              
+
               data.qty += qty;
               data.planningQty += safeNumber(getVal(order, 'planningQty', 10));
               data.remainingQty += safeNumber(getVal(order, 'planningPendingQty', 11));
               data.deliveredQty += safeNumber(getVal(order, 'qtyDelivered', 12));
               data.cancelQty += safeNumber(getVal(order, 'cancelQty', 13));
-              
+
               const status = String(getVal(order, 'dispatchStatus', 14) || '').toLowerCase();
               if (status.includes('complete')) {
-                  data.completedCount++;
+                data.completedCount++;
               }
-              
+
               clientMonthMap.set(client, data);
             }
           }
@@ -232,11 +237,11 @@ const Dashboard = () => {
 
         // Get sorted months
         const sortedMonths = Array.from(monthlyMap.keys()).sort();
-        
+
         // Store the master trend data
         setAllMonthlyMap({
-            months: sortedMonths,
-            clientData: monthlyMap
+          months: sortedMonths,
+          clientData: monthlyMap
         });
 
         setStats(prev => ({
@@ -266,8 +271,8 @@ const Dashboard = () => {
 
         // Stage counts (existing)
         const stage2 = countStage(planningRows, 'columnK', 'columnL');
-        const stage3 = countStage(planningRows, 'columnO', 'columnP');
-        const stage4 = countStage(planningRows, 'columnT', 'columnU');
+        const stage3 = countStage(planningRows, 'columnO', ['columnO', 'columnP']);
+        const stage4 = countStage(planningRows, 'columnT', ['columnT', 'columnU']);
 
         setStats(prev => ({
           ...prev,
@@ -317,9 +322,9 @@ const Dashboard = () => {
     });
 
     const colors = [
-      'rgba(153, 27, 27, 1)',   // Red
-      'rgba(37, 99, 235, 1)',   // Blue
+      'rgba(88, 204, 2, 1)',   // Primary Green
       'rgba(22, 163, 74, 1)',   // Green
+      'rgba(37, 99, 235, 1)',   // Blue
       'rgba(147, 51, 234, 1)',  // Purple
       'rgba(245, 158, 11, 1)',  // Amber
       'rgba(107, 114, 128, 1)'  // Gray (for Others)
@@ -333,9 +338,9 @@ const Dashboard = () => {
       const matches = Array.from(clientData.entries())
         .filter(([name]) => name.toLowerCase().includes(searchTerm.toLowerCase()))
         .sort((a, b) => { // Sort by total volume within matches
-            const aT = Array.from(a[1].values()).reduce((sum, d) => sum + d.qty, 0);
-            const bT = Array.from(b[1].values()).reduce((sum, d) => sum + d.qty, 0);
-            return bT - aT;
+          const aT = Array.from(a[1].values()).reduce((sum, d) => sum + d.qty, 0);
+          const bT = Array.from(b[1].values()).reduce((sum, d) => sum + d.qty, 0);
+          return bT - aT;
         })
         .slice(0, 8); // Performance cap: show top 8 matching results
 
@@ -415,13 +420,13 @@ const Dashboard = () => {
   }, [allMonthlyMap, searchTerm]);
 
   const StatCard = ({ title, value, icon: Icon, color, bgColor }) => (
-    <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-all duration-300">
+    <div className="bg-white rounded border border-gray-100/50 p-5 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{title}</p>
-          <h3 className="text-3xl font-black text-gray-900">{value}</h3>
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 group-hover:text-gray-500 transition-colors">{title}</p>
+          <h3 className="text-2xl font-black text-[#58cc02] group-hover:scale-105 transition-transform origin-left">{value}</h3>
         </div>
-        <div className={`p-3 rounded-xl ${bgColor}`}>
+        <div className={`p-3 rounded ${bgColor} group-hover:scale-110 transition-transform duration-300`}>
           <Icon className={`w-6 h-6 ${color}`} />
         </div>
       </div>
@@ -429,25 +434,25 @@ const Dashboard = () => {
   );
 
   const WorkflowStageCard = ({ title, pending, completed, icon: Icon, color, bgColor, stage }) => (
-    <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:ring-1 hover:ring-gray-200 transition-all">
-      <div className="flex items-center gap-3 mb-5">
-        <div className={`p-2.5 rounded-xl ${bgColor}`}>
+    <div className="bg-white rounded border border-gray-100/50 p-5 shadow-sm hover:shadow-lg hover:ring-1 hover:ring-primary/20 transition-all duration-300 group">
+      <div className="flex items-center gap-3 mb-6">
+        <div className={`p-2.5 rounded ${bgColor} group-hover:rotate-12 transition-transform`}>
           <Icon className={`w-5 h-5 ${color}`} />
         </div>
         <div>
-          <h4 className="font-bold text-gray-900 text-sm">{title}</h4>
-          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Stage {stage}</p>
+          <h4 className="font-bold text-gray-900 text-sm group-hover:text-primary transition-colors">{title}</h4>
+          <p className="text-[10px] text-gray-400 font-black uppercase tracking-tighter">Stage {stage}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+        <div className="bg-gray-50 p-3 rounded border border-gray-100">
           <p className="text-[9px] font-bold text-gray-400 uppercase mb-1 flex items-center gap-1">
             <Clock className="w-3 h-3 text-orange-500" /> Pending
           </p>
           <span className="text-xl font-black text-orange-600 leading-none">{pending}</span>
         </div>
-        <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+        <div className="bg-gray-50 p-3 rounded border border-gray-100">
           <p className="text-[9px] font-bold text-gray-400 uppercase mb-1 flex items-center gap-1">
             <CheckCircle2 className="w-3 h-3 text-green-500" /> Done
           </p>
@@ -460,9 +465,9 @@ const Dashboard = () => {
           <span className="uppercase tracking-widest">Efficiency</span>
           <span className={color}>{completed + pending > 0 ? Math.round((completed / (completed + pending)) * 100) : 0}%</span>
         </div>
-        <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+        <div className="w-full bg-gray-100 rounded h-1.5 overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all duration-1000 ${color.replace('text', 'bg')}`}
+            className={`h-full rounded transition-all duration-1000 ${color.replace('text', 'bg')}`}
             style={{ width: `${completed + pending > 0 ? (completed / (completed + pending)) * 100 : 0}%` }}
           />
         </div>
@@ -472,26 +477,47 @@ const Dashboard = () => {
 
   if (loading) {
     return (
-      <div className="h-[88vh] bg-transparent flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
+      <div className="h-[88vh] flex flex-col items-center justify-center bg-[#F5F5F5] transition-all duration-300">
+        <div className="bg-white/80 p-12 rounded-[2rem] shadow-[0_32px_64px_-15px_rgba(0,0,0,0.08)] flex flex-col items-center gap-8 border border-white relative overflow-hidden group max-w-sm w-full mx-4">
+          <div className="absolute -top-12 -right-12 w-40 h-40 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+          <div className="absolute -bottom-12 -left-12 w-40 h-40 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+
           <div className="relative">
-            <Loader2 className="w-12 h-12 text-red-800 animate-spin" />
-            <Activity className="w-6 h-6 text-red-800 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+            <svg className="w-20 h-20 animate-spin" viewBox="0 0 50 50">
+              <circle className="opacity-10" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="3" style={{ color: 'var(--primary, #58cc02)' }} />
+              <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="90" strokeDashoffset="70" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="h-3 w-3 bg-primary rounded-full animate-pulse shadow-[0_0_15px_rgba(88,204,2,0.6)]"></div>
+            </div>
           </div>
-          <p className="text-sm font-bold text-gray-600 uppercase tracking-widest animate-pulse">Synchronizing Data...</p>
+
+          <div className="flex flex-col items-center text-center">
+            <h3 className="text-xl font-black text-gray-800 uppercase tracking-[0.4em] mb-2 drop-shadow-sm flex items-center justify-center">
+              Loading
+              <span className="inline-flex ml-1">
+                <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
+                <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
+                <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
+              </span>
+            </h3>
+            <p className="text-[10px] text-gray-400 font-black uppercase tracking-[0.2em] bg-gray-50/50 px-4 py-1.5 rounded-full border border-gray-100 shadow-inner">
+              Synchronizing Dashboard
+            </p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-screen bg-[#F5F5F5]">
       <div className="p-3 sm:p-6 space-y-6">
         {/* Header */}
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between bg-white/70 backdrop-blur-sm p-6 rounded shadow-sm border border-white/50">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <div className="w-2 h-2 bg-red-800 rounded-full animate-pulse"></div>
+              <div className="w-2 h-2 bg-primary rounded animate-pulse"></div>
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em]">Real-time Overview</span>
             </div>
             <h1 className="text-2xl lg:text-3xl font-black text-gray-900 tracking-tight">System Dashboard</h1>
@@ -506,10 +532,10 @@ const Dashboard = () => {
             </div>
             <button
               onClick={() => {
-                  sessionStorage.removeItem(CACHE_KEY);
-                  loadDashboardData();
+                sessionStorage.removeItem(CACHE_KEY);
+                loadDashboardData();
               }}
-              className="group flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-red-800 rounded-xl hover:bg-red-900 transition-all shadow-lg shadow-red-800/20 active:scale-95"
+              className="group flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-primary rounded hover:bg-primary-hover transition-all shadow-lg shadow-primary/20 active:scale-95"
             >
               <RefreshCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
               Refresh Analytics
@@ -523,8 +549,8 @@ const Dashboard = () => {
             title="Order Qty"
             value={stats.orderQtySum.toLocaleString()}
             icon={FileText}
-            color="text-blue-600"
-            bgColor="bg-blue-50"
+            color="text-primary"
+            bgColor="bg-green-50"
           />
           <StatCard
             title="Cancel qty"
@@ -537,15 +563,15 @@ const Dashboard = () => {
             title="Remaining Qty"
             value={stats.remainingQtySum.toLocaleString()}
             icon={BellRing}
-            color="text-purple-600"
-            bgColor="bg-purple-50"
+            color="text-primary"
+            bgColor="bg-green-50"
           />
           <StatCard
             title="Delivered Qty"
             value={stats.deliveredQtySum.toLocaleString()}
             icon={TrendingUp}
-            color="text-emerald-600"
-            bgColor="bg-emerald-50"
+            color="text-primary"
+            bgColor="bg-green-50"
           />
         </div>
 
@@ -553,10 +579,10 @@ const Dashboard = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between px-2">
             <h2 className="text-xl font-black text-gray-900 flex items-center gap-2 uppercase tracking-tight">
-              <Truck className="w-6 h-6 text-red-800" />
+              <Truck className="w-6 h-6 text-green-500" />
               Dispatch Pipeline
             </h2>
-            <span className="hidden sm:block text-[10px] font-bold text-gray-400 uppercase tracking-widest bg-gray-100 px-3 py-1 rounded-full border border-gray-200">
+            <span className="hidden sm:block text-[10px] font-bold text-gray-400 uppercase tracking-widest bg-gray-100 px-3 py-1 rounded border border-gray-200">
               5 Active Stages
             </span>
           </div>
@@ -577,8 +603,8 @@ const Dashboard = () => {
               pending={stats.pendingNotification}
               completed={stats.completedNotification}
               icon={Send}
-              color="text-purple-600"
-              bgColor="bg-purple-50"
+              color="text-primary"
+              bgColor="bg-green-50"
             />
             <WorkflowStageCard
               stage="3"
@@ -586,7 +612,7 @@ const Dashboard = () => {
               pending={stats.pendingCompletion}
               completed={stats.completedCompletion}
               icon={PackageCheck}
-              color="text-green-600"
+              color="text-primary"
               bgColor="bg-green-50"
             />
             <WorkflowStageCard
@@ -595,8 +621,8 @@ const Dashboard = () => {
               pending={stats.pendingPostNotify}
               completed={stats.fullyCompleted}
               icon={BellRing}
-              color="text-amber-600"
-              bgColor="bg-amber-50"
+              color="text-primary"
+              bgColor="bg-green-50"
             />
           </div>
         </div>
@@ -604,10 +630,10 @@ const Dashboard = () => {
         {/* Chart Section – Recent Workflow Activity + Godown Load */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Recent Activity Timeline (from ORDER) */}
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+          <div className="lg:col-span-2 bg-white rounded border border-white/50 p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-black text-gray-800 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-red-800" />
+                <TrendingUp className="w-5 h-5 text-primary" />
                 Client Monthly Volume Trend
               </h3>
               <div className="flex items-center gap-3">
@@ -617,7 +643,7 @@ const Dashboard = () => {
                     placeholder="Filter date..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-3 pr-8 py-1.5 bg-gray-50 border border-gray-100 rounded-lg text-[10px] font-bold outline-none focus:ring-1 focus:ring-red-800 w-32 sm:w-48 transition-all"
+                    className="pl-3 pr-8 py-1.5 bg-gray-50 border border-gray-100 rounded-md text-[10px] font-bold outline-none focus:ring-1 focus:ring-primary w-32 sm:w-48 transition-all"
                   />
                 </div>
                 <span className="text-[10px] font-bold text-gray-400 uppercase">
@@ -627,7 +653,7 @@ const Dashboard = () => {
             </div>
 
             {/* Area Chart for monthly trends */}
-            <div className="h-[300px] w-full bg-gray-50/30 rounded-xl p-2 border border-gray-50">
+            <div className="h-[300px] w-full bg-gray-50/30 rounded p-2 border border-gray-50">
               {monthlyTrendData.labels.length > 0 ? (
                 <Line
                   data={monthlyTrendData}
@@ -661,17 +687,17 @@ const Dashboard = () => {
                             const index = context.dataIndex;
                             const extra = dataset.extra ? dataset.extra[index] : null;
                             const label = dataset.label || '';
-                            
+
                             const lines = [`${label}: ${context.parsed.y.toLocaleString()} Total Qty`];
-                            
+
                             if (extra) {
-                                lines.push(`Planning Qty: ${extra.planningQty.toLocaleString()}`);
-                                lines.push(`Remaining Plan Qty: ${extra.remainingQty.toLocaleString()}`);
-                                lines.push(`Delivered Qty: ${extra.deliveredQty.toLocaleString()}`);
-                                lines.push(`Order Cancel: ${extra.cancelQty.toLocaleString()}`);
-                                lines.push(`Completed Dispatches: ${extra.completedCount}`);
+                              lines.push(`Planning Qty: ${extra.planningQty.toLocaleString()}`);
+                              lines.push(`Remaining Plan Qty: ${extra.remainingQty.toLocaleString()}`);
+                              lines.push(`Delivered Qty: ${extra.deliveredQty.toLocaleString()}`);
+                              lines.push(`Order Cancel: ${extra.cancelQty.toLocaleString()}`);
+                              lines.push(`Completed Dispatches: ${extra.completedCount}`);
                             }
-                            
+
                             return lines;
                           }
                         }
@@ -700,9 +726,9 @@ const Dashboard = () => {
           </div>
 
           {/* Godown Load (from Planning) – Bar Chart */}
-          <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+          <div className="bg-white rounded border border-white/50 p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
             <h3 className="text-lg font-black text-gray-800 mb-6 flex items-center gap-2">
-              <Truck className="w-5 h-5 text-red-800" />
+              <Truck className="w-5 h-5 text-primary" />
               Godown Load (Dispatch Qty)
             </h3>
             <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
@@ -713,9 +739,9 @@ const Dashboard = () => {
                   return (
                     <div key={item.godown} className="flex items-center gap-3">
                       <span className="text-xs font-bold text-gray-600 w-24 truncate">{item.godown}</span>
-                      <div className="flex-1 h-8 bg-gray-100 rounded-lg overflow-hidden">
+                      <div className="flex-1 h-8 bg-gray-100 rounded overflow-hidden">
                         <div
-                          className="h-full bg-red-800 rounded-lg flex items-center justify-end pr-2 text-[10px] font-bold text-white"
+                          className="h-full bg-primary rounded flex items-center justify-end pr-2 text-[10px] font-bold text-white"
                           style={{ width: `${percent}%` }}
                         >
                           {item.total}

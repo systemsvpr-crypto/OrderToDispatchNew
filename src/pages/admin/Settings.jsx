@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { UserPlus, Shield, Check, X, Trash2, Pencil, RefreshCw, Loader, Save } from 'lucide-react';
+import { UserPlus, Shield, Check, X, Trash2, Pencil, RefreshCw, Loader, Save, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
 
 const CACHE_KEY = 'settingsUserData';
@@ -11,6 +11,7 @@ const Settings = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [newUser, setNewUser] = useState({ name: '', id: '', password: '', role: 'user', pageAccess: ['Dashboard'] });
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
     const [editingUser, setEditingUser] = useState(null);
     const [userSearchTerm, setUserSearchTerm] = useState('');
     const { showToast } = useToast();
@@ -77,8 +78,8 @@ const Settings = () => {
                 // Map from B, C, D, E, F
                 const mapped = result.data.map((item, idx) => {
                     const rawAccess = getVal(item, 'pageAccess', 'Access') || '';
-                    const pageAccess = Array.isArray(rawAccess) 
-                        ? rawAccess 
+                    const pageAccess = Array.isArray(rawAccess)
+                        ? rawAccess
                         : String(rawAccess).split(',').map(s => s.trim()).filter(Boolean);
 
                     return {
@@ -152,6 +153,7 @@ const Settings = () => {
             await fetchUsers(true);
             setIsModalOpen(false);
             setEditingUser(null);
+            setShowPassword(false);
             setNewUser({ id: '', name: '', password: '', role: 'user', pageAccess: ['Dashboard'] });
         } catch (error) {
             console.error('Error saving user:', error);
@@ -176,7 +178,7 @@ const Settings = () => {
             // Here we assume backend handles row deletion or we just update with empty/specific flag if needed.
             // For now, let's assume we update the status or role to 'deleted' if the backend doesn't support hard delete.
             // Re-fetching after any change is safest.
-            
+
             const response = await fetch(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -217,9 +219,9 @@ const Settings = () => {
 
     return (
         <div className="p-3 sm:p-6 lg:p-8">
-            <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 rounded shadow-sm border border-gray-100">
                 <div className="flex items-center gap-3">
-                    <div className="p-2 bg-red-50 rounded-lg text-red-800"><Shield size={20} /></div>
+                    <div className="p-2 bg-green-50 rounded text-primary"><Shield size={20} /></div>
                     <div>
                         <h1 className="text-xl font-bold text-gray-800">User Settings</h1>
                         <p className="text-gray-500 text-xs">Manage authentication & permissions</p>
@@ -231,7 +233,7 @@ const Settings = () => {
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => fetchUsers(true)}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200"
                     >
                         <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                         Refresh
@@ -241,15 +243,16 @@ const Settings = () => {
                         placeholder="Search users..."
                         value={userSearchTerm}
                         onChange={(e) => setUserSearchTerm(e.target.value)}
-                        className="w-40 lg:w-56 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-800 outline-none text-sm transition-all"
+                        className="w-40 lg:w-56 px-4 py-2 bg-gray-50 border border-gray-200 rounded focus:ring-primary focus:border-primary"
                     />
                     <button
                         onClick={() => {
                             setEditingUser(null);
                             setNewUser({ id: '', name: '', password: '', role: 'user', pageAccess: ['Dashboard'] });
+                            setShowPassword(false);
                             setIsModalOpen(true);
                         }}
-                        className="flex items-center gap-2 px-4 py-2 bg-red-800 text-white rounded-xl hover:bg-red-900 transition-all font-bold text-sm shadow-md active:scale-95"
+                        className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded hover:bg-primary-hover transition-all font-bold text-sm shadow-md active:scale-95"
                     >
                         <UserPlus size={16} />
                         Add User
@@ -257,7 +260,7 @@ const Settings = () => {
                 </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-white rounded shadow-sm border border-gray-200 overflow-hidden">
                 <div className="overflow-x-auto scrollbar-thin max-h-[500px]">
                     <table className="w-full text-left border-collapse min-w-[800px]">
                         <thead>
@@ -273,7 +276,7 @@ const Settings = () => {
                                 <tr key={u.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="px-6 py-4">
                                         <div className="font-bold text-gray-900">{u.name}</div>
-                                        <div className="text-[10px] text-indigo-600 font-bold uppercase tracking-wider bg-indigo-50 px-1.5 py-0.5 rounded inline-block mt-1">{u.role}</div>
+                                        <div className="text-[10px] text-primary font-bold uppercase tracking-wider bg-green-50 px-1.5 py-0.5 rounded inline-block mt-1">{u.role}</div>
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex flex-col gap-1">
@@ -295,14 +298,14 @@ const Settings = () => {
                                         <div className="flex items-center justify-end gap-2">
                                             <button
                                                 onClick={() => handleEditUser(u)}
-                                                className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                                className="p-2 text-gray-400 hover:text-primary hover:bg-green-50 rounded transition-all"
                                                 title="Edit User"
                                             >
                                                 <Pencil size={16} />
                                             </button>
                                             <button
                                                 onClick={() => handleDeleteUser(u)}
-                                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
                                                 title="Delete User"
                                             >
                                                 <Trash2 size={16} />
@@ -324,18 +327,18 @@ const Settings = () => {
             {/* Mobile View */}
             <div className="md:hidden mt-4 space-y-3">
                 {filteredUsers.map(u => (
-                    <div key={u.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-3">
+                    <div key={u.id} className="bg-white p-4 rounded shadow-sm border border-gray-100 space-y-3">
                         <div className="flex justify-between items-start">
                             <div>
                                 <h4 className="font-bold text-gray-900">{u.name}</h4>
-                                <span className="text-[9px] font-bold text-indigo-600 uppercase bg-indigo-50 px-1.5 py-0.5 rounded">{u.role}</span>
+                                <span className="text-[9px] font-bold text-primary uppercase bg-green-50 px-1.5 py-0.5 rounded">{u.role}</span>
                             </div>
                             <div className="flex gap-2">
-                                <button onClick={() => handleEditUser(u)} className="p-2 text-indigo-600 bg-indigo-50 rounded-lg"><Pencil size={16} /></button>
-                                <button onClick={() => handleDeleteUser(u)} className="p-2 text-red-600 bg-red-50 rounded-lg"><Trash2 size={16} /></button>
+                                <button onClick={() => handleEditUser(u)} className="p-2 text-primary bg-green-50 rounded"><Pencil size={16} /></button>
+                                <button onClick={() => handleDeleteUser(u)} className="p-2 text-red-600 bg-red-50 rounded"><Trash2 size={16} /></button>
                             </div>
                         </div>
-                        <div className="bg-gray-50 p-2 rounded-lg text-xs font-mono space-y-1">
+                        <div className="bg-gray-50 p-2 rounded text-xs font-mono space-y-1">
                             <div>ID: {u.id}</div>
                             <div>PW: ••••••••</div>
                         </div>
@@ -349,18 +352,40 @@ const Settings = () => {
             </div>
 
             {(isLoading || isSaving) && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/10 backdrop-blur-[1px]">
-                    <div className="bg-white p-6 rounded-2xl shadow-xl flex flex-col items-center gap-3">
-                        <Loader className="animate-spin text-red-800" size={32} />
-                        <p className="text-sm font-bold text-gray-700">{isLoading ? 'Syncing User Data...' : 'Saving Changes...'}</p>
+                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
+                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
+                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
+                        <div className="relative">
+                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
+                                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
+                                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
+                            </div>
+                        </div>
+                        <div className="flex flex-col items-center text-center">
+                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
+                                {isSaving ? 'Saving' : 'Loading'}
+                                <span className="inline-flex ml-1">
+                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
+                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
+                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
+                                </span>
+                            </h3>
+                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
+                                {isSaving ? 'Updating Profile' : 'Syncing User Data'}
+                            </p>
+                        </div>
                     </div>
                 </div>
             )}
 
             {isModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in duration-300">
-                        <div className="p-6 bg-red-800 text-white flex justify-between items-center">
+                    <div className="bg-white rounded shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in duration-300">
+                        <div className="p-6 bg-primary text-white flex justify-between items-center">
                             <h2 className="text-xl font-bold">{editingUser ? 'Update User' : 'Add System User'}</h2>
                             <button onClick={() => setIsModalOpen(false)} className="text-white/80 hover:text-white"><X size={24} /></button>
                         </div>
@@ -368,25 +393,41 @@ const Settings = () => {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">User Name</label>
-                                    <input type="text" required value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-800 outline-none text-sm" placeholder="User Name" />
+                                    <input type="text" required value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} className="w-full px-4 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm" placeholder="User Name" />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">User ID / Username</label>
-                                    <input type="text" required value={newUser.id} onChange={(e) => setNewUser({ ...newUser, id: e.target.value })} className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-800 outline-none text-sm font-mono" placeholder="User ID" disabled={editingUser !== null} />
+                                    <input type="text" required value={newUser.id} onChange={(e) => setNewUser({ ...newUser, id: e.target.value })} className="w-full px-4 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm font-mono" placeholder="User ID" disabled={editingUser !== null} />
                                 </div>
                             </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Account Password</label>
-                                    <input type="password" required value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-800 outline-none text-sm font-mono" placeholder="••••••••" />
+                                    <div className="relative group">
+                                        <input 
+                                            type={showPassword ? "text" : "password"} 
+                                            required 
+                                            value={newUser.password} 
+                                            onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} 
+                                            className="w-full pl-4 pr-10 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm font-mono" 
+                                            placeholder="••••••••" 
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(!showPassword)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-primary transition-colors focus:outline-none"
+                                        >
+                                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">System Role</label>
-                                    <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })} className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-800 outline-none text-sm">
+                                    <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })} className="w-full px-4 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm">
                                         <option value="user">User</option>
                                         <option value="manager">Admin</option>
-                                       
+
                                     </select>
                                 </div>
                             </div>
@@ -395,15 +436,15 @@ const Settings = () => {
                                 <div className="flex justify-between items-center mb-2">
                                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Module Permissions</label>
                                     <div className="flex gap-2">
-                                        <button 
-                                            type="button" 
+                                        <button
+                                            type="button"
                                             onClick={() => handleToggleAll(true)}
-                                            className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-1 rounded transition-colors"
+                                            className="text-[10px] font-bold text-primary hover:text-primary-hover bg-green-50 px-2 py-1 rounded transition-colors"
                                         >
                                             Select All
                                         </button>
-                                        <button 
-                                            type="button" 
+                                        <button
+                                            type="button"
                                             onClick={() => handleToggleAll(false)}
                                             className="text-[10px] font-bold text-gray-500 hover:text-gray-700 bg-gray-100 px-2 py-1 rounded transition-colors"
                                         >
@@ -411,10 +452,10 @@ const Settings = () => {
                                         </button>
                                     </div>
                                 </div>
-                                <div className="grid grid-cols-2 gap-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                <div className="grid grid-cols-2 gap-2 bg-gray-50 p-3 rounded border border-gray-100">
                                     {allPages.map(page => (
-                                        <label key={page} className={`flex items-center gap-2 text-[11px] p-2 border rounded-lg cursor-pointer transition-all ${newUser.pageAccess.includes(page) ? 'bg-red-50 border-red-200 text-red-900 font-bold' : 'bg-white border-gray-200 text-gray-600'}`}>
-                                            <input type="checkbox" checked={newUser.pageAccess.includes(page)} onChange={() => handleToggleAccess(page)} className="rounded text-red-800 focus:ring-red-800 w-4 h-4 cursor-pointer" />
+                                        <label key={page} className={`flex items-center gap-2 text-[11px] p-2 border rounded cursor-pointer transition-all ${newUser.pageAccess.includes(page) ? 'bg-green-50 border-green-200 text-primary font-bold' : 'bg-white border-gray-200 text-gray-600'}`}>
+                                            <input type="checkbox" checked={newUser.pageAccess.includes(page)} onChange={() => handleToggleAccess(page)} className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer" />
                                             {page}
                                         </label>
                                     ))}
@@ -423,7 +464,7 @@ const Settings = () => {
 
                             <div className="flex justify-end gap-3 pt-6 border-t">
                                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-2 text-gray-600 font-bold text-sm hover:underline">Cancel</button>
-                                <button type="submit" disabled={isSaving} className="flex items-center gap-2 px-8 py-2.5 bg-red-800 text-white rounded-xl hover:bg-red-900 shadow-lg font-bold text-sm active:scale-95 transition-all">
+                                <button type="submit" disabled={isSaving} className="flex items-center gap-2 px-8 py-2.5 bg-primary text-white rounded hover:bg-primary-hover shadow-lg font-bold text-sm active:scale-95 transition-all">
                                     {isSaving ? <Loader size={18} className="animate-spin" /> : <Save size={18} />}
                                     {isSaving ? 'Processing...' : (editingUser ? 'Update Profile' : 'Create Account')}
                                 </button>
