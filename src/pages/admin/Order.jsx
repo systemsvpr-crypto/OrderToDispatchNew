@@ -15,13 +15,11 @@ const Order = () => {
     const [formData, setFormData] = useState({
         orderDate: new Date().toISOString().split('T')[0],
         clientName: '',
-        godownName: '',
-        items: [{ itemName: '', rate: '', qty: '' }]
+        items: [{ itemName: '', rate: '', qty: '', godownName: '', godownOptions: [], isFetchingGodowns: false }]
     });
 
     const [itemNames, setItemNames] = useState([]);
     const [clients, setClients] = useState([]);
-    const [godowns, setGodowns] = useState([]);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [clientFilter, setClientFilter] = useState('');
@@ -40,21 +38,20 @@ const Order = () => {
         const cached = sessionStorage.getItem(CACHE_KEY);
         if (!cached) return null;
         try {
-            const { orders, itemNames, clients, godowns, timestamp } = JSON.parse(cached);
+            const { orders, itemNames, clients, timestamp } = JSON.parse(cached);
             const age = Date.now() - timestamp;
             if (age < CACHE_DURATION) {
-                return { orders, itemNames, clients, godowns };
+                return { orders, itemNames, clients };
             }
         } catch (e) { /* ignore */ }
         return null;
     }, []);
 
-    const saveToCache = useCallback((ordersData, itemNamesData, clientsData, godownsData) => {
+    const saveToCache = useCallback((ordersData, itemNamesData, clientsData) => {
         sessionStorage.setItem(CACHE_KEY, JSON.stringify({
             orders: ordersData,
             itemNames: itemNamesData,
             clients: clientsData,
-            godowns: godownsData,
             timestamp: Date.now()
         }));
     }, []);
@@ -153,16 +150,14 @@ const Order = () => {
         }
 
         try {
-            const [productsRes, clientsRes, godownsRes] = await Promise.all([
+            const [productsRes, clientsRes] = await Promise.all([
                 fetch(`${url}?sheet=Products`),
-                fetch(`${url}?sheet=Sales Vendor`),
-                fetch(`${url}?sheet=Products&col=4`)
+                fetch(`${url}?sheet=Sales Vendor`)
             ]);
 
-            const [productsJson, clientsJson, godownsJson] = await Promise.all([
+            const [productsJson, clientsJson] = await Promise.all([
                 productsRes.json(),
-                clientsRes.json(),
-                godownsRes.json()
+                clientsRes.json()
             ]);
 
             const processData = (json) => {
@@ -178,16 +173,13 @@ const Order = () => {
 
             const newItems = processData(productsJson);
             const newClients = processData(clientsJson);
-            const newGodowns = processData(godownsJson);
 
             setItemNames(newItems);
             setClients(newClients);
-            setGodowns(newGodowns);
 
             console.log('Master data loaded:', {
                 items: newItems.length,
-                clients: newClients.length,
-                godowns: newGodowns.length
+                clients: newClients.length
             });
         } catch (error) {
             console.error('fetchMasterData error:', error);
@@ -202,7 +194,6 @@ const Order = () => {
             setOrders(cached.orders);
             setItemNames(cached.itemNames);
             setClients(cached.clients);
-            setGodowns(cached.godowns);
         } else {
             fetchOrders();
             fetchMasterData();
@@ -211,10 +202,47 @@ const Order = () => {
 
     // Dedicated Cache Sync Effect: Watches for changes and updates sessionStorage
     useEffect(() => {
-        if (orders.length > 0 || itemNames.length > 0 || clients.length > 0 || godowns.length > 0) {
-            saveToCache(orders, itemNames, clients, godowns);
+        if (orders.length > 0 || itemNames.length > 0 || clients.length > 0) {
+            saveToCache(orders, itemNames, clients);
         }
-    }, [orders, itemNames, clients, godowns, saveToCache]);
+    }, [orders, itemNames, clients, saveToCache]);
+
+    // --- Fetch godowns: matchCol=1 (product B) + col=8 (godown I) from Apps Script ---
+    const GODOWN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzsybGNsW1jRz8MqT-971WLNFRJXgGEE9_QZDOCt3x4Y2snuRFxl_RQXD4HEO8ozMIn4g/exec';
+    const fetchGodownsForItem = useCallback(async (itemName, index) => {
+        if (!itemName) return;
+
+        setFormData(prev => {
+            const newItems = [...prev.items];
+            newItems[index] = { ...newItems[index], isFetchingGodowns: true, godownName: '', godownOptions: [] };
+            return { ...prev, items: newItems };
+        });
+
+        try {
+            // matchCol=1 → filter by col B (product name); col=8 → return col I (Godown Name)
+            // (Apps Script uses 0-based indexing: A=0, B=1, ..., I=8)
+            const url = `${GODOWN_SCRIPT_URL}?sheet=Products&col=8&matchCol=1&matchVal=${encodeURIComponent(itemName)}`;
+            const res = await fetch(url);
+            const json = await res.json();
+
+            const flat = arr => (Array.isArray(arr) ? arr.map(v => Array.isArray(v) ? v[0] : v) : []);
+            const options = flat(json?.data ?? []).filter(v => v !== null && v !== undefined && v !== '');
+            const unique = [...new Set(options)];
+
+            setFormData(prev => {
+                const newItems = [...prev.items];
+                newItems[index] = { ...newItems[index], isFetchingGodowns: false, godownOptions: unique };
+                return { ...prev, items: newItems };
+            });
+        } catch (err) {
+            console.error('[Godown] error:', err);
+            setFormData(prev => {
+                const newItems = [...prev.items];
+                newItems[index] = { ...newItems[index], isFetchingGodowns: false, godownOptions: [] };
+                return { ...prev, items: newItems };
+            });
+        }
+    }, []);
 
     // --- Manual refresh ---
     const handleRefresh = useCallback(() => {
@@ -282,7 +310,7 @@ const Order = () => {
     const handleAddItem = () => {
         setFormData(prev => ({
             ...prev,
-            items: [...prev.items, { itemName: '', rate: '', qty: '' }]
+            items: [...prev.items, { itemName: '', rate: '', qty: '', godownName: '', godownOptions: [], isFetchingGodowns: false }]
         }));
     };
 
@@ -296,9 +324,12 @@ const Order = () => {
     const handleItemChange = (index, field, value) => {
         setFormData(prev => {
             const newItems = [...prev.items];
-            newItems[index][field] = value;
+            newItems[index] = { ...newItems[index], [field]: value };
             return { ...prev, items: newItems };
         });
+        if (field === 'itemName') {
+            fetchGodownsForItem(value, index);
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -318,7 +349,7 @@ const Order = () => {
                 rows: formData.items.map(item => ({
                     orderDate: formData.orderDate,
                     clientName: formData.clientName,
-                    godownName: formData.godownName,
+                    godownName: item.godownName,
                     itemName: item.itemName,
                     rate: item.rate,
                     qty: item.qty,
@@ -339,8 +370,7 @@ const Order = () => {
             setFormData({
                 orderDate: new Date().toISOString().split('T')[0],
                 clientName: '',
-                godownName: '',
-                items: [{ itemName: '', rate: '', qty: '' }]
+                items: [{ itemName: '', rate: '', qty: '', godownName: '', godownOptions: [], isFetchingGodowns: false }]
             });
             setIsModalOpen(false);
 
@@ -617,7 +647,7 @@ const Order = () => {
                             {/* Scrollable Content Area */}
                             <div className="flex-1 overflow-y-auto p-6 sm:p-10 space-y-10 custom-scrollbar bg-slate-50">
                                 {/* Order Metadata Section */}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                                     <div className="space-y-2">
                                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Order Date</label>
                                         <div className="relative">
@@ -630,23 +660,13 @@ const Order = () => {
                                             />
                                         </div>
                                     </div>
-                                    <div className="space-y-2 lg:col-span-1">
+                                    <div className="space-y-2">
                                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Client Selection</label>
                                         <SearchableDropdown
                                             value={formData.clientName}
                                             onChange={(val) => setFormData({ ...formData, clientName: val })}
                                             options={clients}
                                             placeholder="Choose Client"
-                                            showAll={false}
-                                        />
-                                    </div>
-                                    <div className="space-y-2 lg:col-span-1">
-                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Location / Godown</label>
-                                        <SearchableDropdown
-                                            value={formData.godownName}
-                                            onChange={(val) => setFormData({ ...formData, godownName: val })}
-                                            options={godowns}
-                                            placeholder="Select Godown"
                                             showAll={false}
                                         />
                                     </div>
@@ -677,8 +697,8 @@ const Order = () => {
                                                         {index + 1}
                                                     </div>
 
-                                                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 items-end">
-                                                        <div className="sm:col-span-6">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end">
+                                                        <div className="sm:col-span-4">
                                                             <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Product / Item Name</label>
                                                             <SearchableDropdown
                                                                 value={item.itemName}
@@ -689,6 +709,19 @@ const Order = () => {
                                                             />
                                                         </div>
                                                         <div className="sm:col-span-3">
+                                                            <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">
+                                                                Location / Godown
+                                                                {item.isFetchingGodowns && <span className="ml-2 text-primary animate-pulse">...</span>}
+                                                            </label>
+                                                            <SearchableDropdown
+                                                                value={item.godownName}
+                                                                onChange={(val) => handleItemChange(index, 'godownName', val)}
+                                                                options={item.godownOptions}
+                                                                placeholder={item.itemName ? (item.isFetchingGodowns ? 'Fetching...' : 'Select Godown') : 'Select item first'}
+                                                                showAll={false}
+                                                            />
+                                                        </div>
+                                                        <div className="sm:col-span-2">
                                                             <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Unit Price (₹)</label>
                                                             <input
                                                                 type="number"
@@ -701,7 +734,7 @@ const Order = () => {
                                                         </div>
                                                         <div className="sm:col-span-3 flex gap-4 items-end">
                                                             <div className="flex-1">
-                                                                <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Quantity</label>
+                                                                <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Qty</label>
                                                                 <input
                                                                     type="number"
                                                                     required
