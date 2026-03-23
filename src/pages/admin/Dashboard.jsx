@@ -451,7 +451,7 @@ const Dashboard = () => {
   const WorkflowStageCard = ({ title, pending, completed, icon: Icon, color, bgColor, stage }) => {
     const total = completed + pending;
     const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
-    
+
     // Improved color mapping for gradients and shadows
     const colorClasses = {
       'text-blue-600': 'from-blue-500 to-blue-400 shadow-blue-500/20',
@@ -459,14 +459,14 @@ const Dashboard = () => {
       'text-orange-600': 'from-orange-500 to-orange-400 shadow-orange-500/20',
       'text-red-600': 'from-red-500 to-red-400 shadow-red-500/20'
     };
-    
+
     const barColorClass = colorClasses[color] || 'from-primary to-green-400 shadow-primary/20';
 
     return (
       <div className="bg-white rounded border border-gray-100/50 p-5 shadow-sm hover:shadow-lg hover:ring-1 hover:ring-primary/20 transition-all duration-300 group relative overflow-hidden">
         {/* Decorative corner accent */}
         <div className={`absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 rounded-full opacity-5 ${bgColor} group-hover:opacity-10 transition-opacity`} />
-        
+
         <div className="flex items-center gap-3 mb-6 relative">
           <div className={`p-2.5 rounded ${bgColor} group-hover:rotate-12 transition-transform shadow-sm`}>
             <Icon className={`w-5 h-5 ${color}`} />
@@ -502,7 +502,7 @@ const Dashboard = () => {
               Efficiency
             </div>
           </div>
-          
+
           <div className="relative h-2.5 bg-gray-100 rounded-full overflow-hidden shadow-inner p-[2px]">
             {/* Progress Bar with Gradient & Shimmer */}
             <div

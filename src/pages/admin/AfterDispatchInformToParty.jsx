@@ -257,7 +257,7 @@ const AfterDispatchInformToParty = () => {
             setSelectedRows({});
 
             showToast('Notification status updated successfully!', 'success');
-            
+
             // Refresh data to sync with backend
             handleRefresh();
         } catch (error) {

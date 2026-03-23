@@ -231,7 +231,13 @@ const Order = () => {
 
             setFormData(prev => {
                 const newItems = [...prev.items];
-                newItems[index] = { ...newItems[index], isFetchingGodowns: false, godownOptions: unique };
+                const prefilledGodown = unique.length > 0 ? unique[0] : '';
+                newItems[index] = {
+                    ...newItems[index],
+                    isFetchingGodowns: false,
+                    godownOptions: unique,
+                    godownName: prefilledGodown
+                };
                 return { ...prev, items: newItems };
             });
         } catch (err) {
@@ -414,7 +420,7 @@ const Order = () => {
                                 <RefreshCw size={16} className={isLoadingOrders ? 'animate-spin' : ''} />
                                 <span className="hidden sm:inline">Refresh</span>
                             </button>
-                            
+
                             <button
                                 onClick={() => setIsModalOpen(true)}
                                 className="flex items-center justify-center gap-2 px-6 py-2 bg-primary text-white rounded-xl hover:bg-primary-hover shadow-lg shadow-primary/20 font-black text-[10px] uppercase tracking-widest transition-all active:scale-95"
@@ -445,7 +451,7 @@ const Order = () => {
                             allLabel="All Clients"
                             className="w-full"
                         />
-                        
+
                         <SearchableDropdown
                             value={godownFilter}
                             onChange={setGodownFilter}
@@ -614,11 +620,11 @@ const Order = () => {
             {isModalOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-6 lg:p-10 transition-all duration-500">
                     {/* New Backdrop with blur */}
-                    <div 
+                    <div
                         className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-300"
                         onClick={() => !isSubmitting && setIsModalOpen(false)}
                     />
-                    
+
                     {/* Modal Card */}
                     <div className="relative bg-white sm:rounded-[2.5rem] shadow-[0_40px_100px_rgba(0,0,0,0.25)] w-full h-full sm:h-auto sm:max-h-[85vh] sm:max-w-4xl lg:max-w-5xl flex flex-col overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-10 duration-500 ease-out border border-white/20">
                         {/* Decorative background element */}
@@ -635,8 +641,8 @@ const Order = () => {
                                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] mt-0.5">Fill in the order details</p>
                                 </div>
                             </div>
-                            <button 
-                                onClick={() => !isSubmitting && setIsModalOpen(false)} 
+                            <button
+                                onClick={() => !isSubmitting && setIsModalOpen(false)}
                                 className="group p-2 text-gray-400 hover:text-gray-900 transition-all bg-gray-50 hover:bg-gray-100 rounded-xl active:scale-90"
                             >
                                 <X size={20} className="group-hover:rotate-90 transition-transform duration-300" />
@@ -686,8 +692,8 @@ const Order = () => {
 
                                     <div className="space-y-5">
                                         {formData.items.map((item, index) => (
-                                            <div 
-                                                key={index} 
+                                            <div
+                                                key={index}
                                                 className="group relative animate-in slide-in-from-right-10 duration-300"
                                                 style={{ animationDelay: `${index * 50}ms` }}
                                             >
@@ -713,12 +719,12 @@ const Order = () => {
                                                                 Location / Godown
                                                                 {item.isFetchingGodowns && <span className="ml-2 text-primary animate-pulse">...</span>}
                                                             </label>
-                                                            <SearchableDropdown
+                                                            <input
+                                                                type="text"
+                                                                readOnly
                                                                 value={item.godownName}
-                                                                onChange={(val) => handleItemChange(index, 'godownName', val)}
-                                                                options={item.godownOptions}
-                                                                placeholder={item.itemName ? (item.isFetchingGodowns ? 'Fetching...' : 'Select Godown') : 'Select item first'}
-                                                                showAll={false}
+                                                                placeholder={item.isFetchingGodowns ? 'Fetching...' : 'Location / Godown'}
+                                                                className="w-full px-5 py-3.5 bg-slate-50/50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-600 outline-none cursor-default shadow-sm"
                                                             />
                                                         </div>
                                                         <div className="sm:col-span-2">

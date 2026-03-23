@@ -405,13 +405,13 @@ const Settings = () => {
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Account Password</label>
                                     <div className="relative group">
-                                        <input 
-                                            type={showPassword ? "text" : "password"} 
-                                            required 
-                                            value={newUser.password} 
-                                            onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} 
-                                            className="w-full pl-4 pr-10 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm font-mono" 
-                                            placeholder="••••••••" 
+                                        <input
+                                            type={showPassword ? "text" : "password"}
+                                            required
+                                            value={newUser.password}
+                                            onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                                            className="w-full pl-4 pr-10 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm font-mono"
+                                            placeholder="••••••••"
                                         />
                                         <button
                                             type="button"
