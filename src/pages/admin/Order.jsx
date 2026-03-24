@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, X, Save, ChevronUp, ChevronDown, RefreshCw, Search } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSheets } from '../../contexts/SheetsContext';
 import SearchableDropdown from '../../components/SearchableDropdown';
 
 const CACHE_KEY = 'orderData';
@@ -10,53 +11,67 @@ const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 const Order = () => {
     const { showToast } = useToast();
     const { user } = useAuth();
-    const [orders, setOrders] = useState([]);
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [formData, setFormData] = useState({
-        orderDate: new Date().toISOString().split('T')[0],
-        clientName: '',
-        items: [{ itemName: '', rate: '', qty: '', godownName: '', godownOptions: [], isFetchingGodowns: false }]
-    });
+    const { 
+        orders: rawOrders, 
+        isLoading: isLoadingOrders, 
+        refreshAll 
+    } = useSheets();
 
-    const [itemNames, setItemNames] = useState([]);
+    const orders = useMemo(() => rawOrders, [rawOrders]);
+
+    // --- Direct fetch for clients and itemNames (original working approach) ---
     const [clients, setClients] = useState([]);
+    const [itemNames, setItemNames] = useState([]);
 
-    const [searchTerm, setSearchTerm] = useState('');
-    const [clientFilter, setClientFilter] = useState('');
-    const [godownFilter, setGodownFilter] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-    const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
-    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const MASTER_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzsybGNsW1jRz8MqT-971WLNFRJXgGEE9_QZDOCt3x4Y2snuRFxl_RQXD4HEO8ozMIn4g/exec';
 
-    const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-    const MASTER_URL = import.meta.env.VITE_MASTER_URL;
-    const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
+    useEffect(() => {
+        // Helper to extract all string values from any nested structure (skip numbers)
+        const extractStrings = (data) => {
+            const result = [];
+            const walk = (item) => {
+                if (Array.isArray(item)) { item.forEach(walk); return; }
+                if (item && typeof item === 'object') { Object.values(item).forEach(walk); return; }
+                if (item != null && String(item).trim() && isNaN(Number(item))) result.push(String(item).trim());
+            };
+            walk(data);
+            return result;
+        };
 
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { orders, itemNames, clients, timestamp } = JSON.parse(cached);
-            const age = Date.now() - timestamp;
-            if (age < CACHE_DURATION) {
-                return { orders, itemNames, clients };
+        // Fetch clients from Purchase Vendor sheet, Column B
+        const fetchClients = async () => {
+            try {
+                const res = await fetch(`${MASTER_SCRIPT_URL}?sheet=Sales%20Vendor&mode=col&col=0&sheetId=1ewO_3413za_gEguwM-Bs733bUCnUSirmDbwgbtfvTp8`);
+                const json = await res.json();
+                if (json.success && json.data) {
+                    const all = extractStrings(json.data);
+                    const filtered = all.filter(v => v && !['client','client name','customer name','purchase vendor','vendor name'].includes(v.toLowerCase()));
+                    setClients([...new Set(filtered)].sort());
+                }
+            } catch (err) {
+                console.error('[Order] Failed to fetch clients:', err);
             }
-        } catch (e) { /* ignore */ }
-        return null;
+        };
+
+        // Fetch item names from Products sheet, Column B
+        const fetchItemNames = async () => {
+            try {
+                const res = await fetch(`${MASTER_SCRIPT_URL}?sheet=Products&mode=col&col=1`);
+                const json = await res.json();
+                if (json.success && json.data) {
+                    const all = extractStrings(json.data);
+                    const filtered = all.filter(v => v && !['product','item name','product name'].includes(v.toLowerCase()));
+                    setItemNames([...new Set(filtered)].sort());
+                }
+            } catch (err) {
+                console.error('[Order] Failed to fetch item names:', err);
+            }
+        };
+
+        fetchClients();
+        fetchItemNames();
     }, []);
 
-    const saveToCache = useCallback((ordersData, itemNamesData, clientsData) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-            orders: ordersData,
-            itemNames: itemNamesData,
-            clients: clientsData,
-            timestamp: Date.now()
-        }));
-    }, []);
-
-    // --- Date formatter ---
     const formatDisplayDate = (dateStr) => {
         if (!dateStr || dateStr === '-') return '-';
         try {
@@ -67,145 +82,30 @@ const Order = () => {
             const month = months[date.getMonth()];
             const year = date.getFullYear();
             return `${day}-${month}-${year}`;
-        } catch {
-            return dateStr;
-        }
+        } catch { return dateStr; }
     };
 
-    // ----- Fetch orders from the ORDER sheet - Stable Fetcher -----
-    const fetchOrders = useCallback(async (force = false) => {
-        setIsLoadingOrders(true);
-        try {
-            if (!API_URL) {
-                showToast('Error', 'API URL not configured');
-                return;
-            }
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [formData, setFormData] = useState({
+        orderDate: new Date().toISOString().split('T')[0],
+        clientName: '',
+        items: [{ itemName: '', rate: '', qty: '', godownName: '', godownOptions: [], isFetchingGodowns: false }]
+    });
 
-            const url = new URL(API_URL);
-            url.searchParams.set('sheet', 'ORDER');
-            url.searchParams.set('mode', 'table');
-            if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [clientFilter, setClientFilter] = useState('');
+    const [godownFilter, setGodownFilter] = useState('');
+    const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
 
-            const response = await fetch(url.toString());
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
+    const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
 
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Unknown error');
-
-            let dataArray = result.data;
-            if (!Array.isArray(dataArray)) dataArray = [];
-
-            if (dataArray.length === 0) {
-                setOrders([]);
-                return;
-            }
-
-            const isArrayData = Array.isArray(dataArray[0]);
-            const dataToMap = dataArray.slice(5);
-
-            let mappedOrders;
-            if (isArrayData) {
-                mappedOrders = dataToMap.map(item => ({
-                    orderNumber: item[1] || '-',
-                    orderDate: item[2] || '-',
-                    clientName: item[3] || '-',
-                    godownName: item[4] || '-',
-                    itemName: item[5] || '-',
-                    rate: item[6] || '0',
-                    qty: item[7] || '0',
-                    currentStock: item[8] || '-',
-                    intransitQty: item[9] || '-',
-                    createdBy: item[24] || '-'   // 👈 Map column Y
-                }));
-            } else {
-                mappedOrders = dataToMap.map(item => ({
-                    orderNumber: item.orderNumber || '-',
-                    orderDate: item.orderDate || '-',
-                    clientName: item.clientName || '-',
-                    godownName: item.godownName || '-',
-                    itemName: item.itemName || '-',
-                    rate: item.rate || '0',
-                    qty: item.qty || '0',
-                    currentStock: item.currentStock || '-',
-                    intransitQty: item.intransitQty || '-',
-                    createdBy: item.createdBy || '-' // 👈 Map from object if using object mode
-                }));
-            }
-
-            setOrders(mappedOrders);
-        } catch (error) {
-            console.error('fetchOrders error:', error);
-            showToast('Error', error.message);
-        } finally {
-            setIsLoadingOrders(false);
-        }
-    }, [API_URL, SHEET_ID, showToast]); // Stable: No data dependencies
-
-    // ----- Fetch master data (products, clients, godowns) - Stable -----
-    const fetchMasterData = useCallback(async () => {
-        const url = MASTER_URL?.trim();
-        if (!url) {
-            console.error('MASTER_URL is not defined or empty');
-            return;
-        }
-
-        try {
-            const [productsRes, clientsRes] = await Promise.all([
-                fetch(`${url}?sheet=Products`),
-                fetch(`${url}?sheet=Sales Vendor`)
-            ]);
-
-            const [productsJson, clientsJson] = await Promise.all([
-                productsRes.json(),
-                clientsRes.json()
-            ]);
-
-            const processData = (json) => {
-                if (json.success && Array.isArray(json.data)) {
-                    // If it's a 2D array (array of arrays), flatten it by taking the first element of each row
-                    if (Array.isArray(json.data[0])) {
-                        return json.data.map(row => row[0]).filter(val => val !== null && val !== undefined && val !== '');
-                    }
-                    return json.data.filter(val => val !== null && val !== undefined && val !== '');
-                }
-                return [];
-            };
-
-            const newItems = processData(productsJson);
-            const newClients = processData(clientsJson);
-
-            setItemNames(newItems);
-            setClients(newClients);
-
-            console.log('Master data loaded:', {
-                items: newItems.length,
-                clients: newClients.length
-            });
-        } catch (error) {
-            console.error('fetchMasterData error:', error);
-            showToast('Error', 'Failed to load master data: ' + error.message);
-        }
-    }, [MASTER_URL, showToast]); // Stable: No state dependencies
-
-    // On mount: load from cache or fetch
+    // On mount: ensure data is loaded
     useEffect(() => {
-        const cached = loadFromCache();
-        if (cached) {
-            setOrders(cached.orders);
-            setItemNames(cached.itemNames);
-            setClients(cached.clients);
-        } else {
-            fetchOrders();
-            fetchMasterData();
-        }
-    }, [loadFromCache, fetchOrders, fetchMasterData]);
-
-    // Dedicated Cache Sync Effect: Watches for changes and updates sessionStorage
-    useEffect(() => {
-        if (orders.length > 0 || itemNames.length > 0 || clients.length > 0) {
-            saveToCache(orders, itemNames, clients);
-        }
-    }, [orders, itemNames, clients, saveToCache]);
+        refreshAll();
+    }, [refreshAll]);
 
     // --- Fetch godowns: matchCol=1 (product B) + col=8 (godown I) from Apps Script ---
     const GODOWN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzsybGNsW1jRz8MqT-971WLNFRJXgGEE9_QZDOCt3x4Y2snuRFxl_RQXD4HEO8ozMIn4g/exec';
@@ -252,10 +152,8 @@ const Order = () => {
 
     // --- Manual refresh ---
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        fetchOrders(true);
-        fetchMasterData();
-    }, [fetchOrders, fetchMasterData]);
+        refreshAll(true);
+    }, [refreshAll]);
 
     // --- Filtering and sorting ---
     const requestSort = (key) => {
@@ -295,12 +193,13 @@ const Order = () => {
         });
     }, [sortConfig]);
 
-    const filterClients = useMemo(() => [...new Set(orders.map(o => o.clientName))].filter(Boolean).sort(), [orders]);
-    const filterGodowns = useMemo(() => [...new Set(orders.map(o => o.godownName))].filter(Boolean).sort(), [orders]);
+    const filterClients = useMemo(() => [...new Set(orders.slice(5).map(o => o.clientName))].filter(Boolean).sort(), [orders]);
+    const filterGodowns = useMemo(() => [...new Set(orders.slice(5).map(o => o.godownName))].filter(Boolean).sort(), [orders]);
+    const sortedOrders = useMemo(() => orders.slice(5), [orders]);
 
     const filteredAndSortedOrders = useMemo(() =>
         getSortedItems(
-            orders.filter(order => {
+            sortedOrders.filter(order => {
                 const matchesSearch = Object.values(order).some(val =>
                     String(val).toLowerCase().includes(searchTerm.toLowerCase())
                 );
@@ -380,9 +279,8 @@ const Order = () => {
             });
             setIsModalOpen(false);
 
-            // Invalidate cache and refetch orders
-            sessionStorage.removeItem(CACHE_KEY);
-            await fetchOrders(true);
+            // Global refresh to sync across all pages
+            await refreshAll(true);
             setTimeout(() => setShowSuccessOverlay(false), 2500);
         } catch (error) {
             console.error('Submit error:', error);
@@ -631,7 +529,7 @@ const Order = () => {
                         <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
 
                         {/* Glassmorphic Header */}
-                        <div className="relative px-6 py-5 sm:px-10 sm:py-8 border-b border-gray-50 flex justify-between items-center bg-white/80 backdrop-blur-md shrink-0 z-10">
+                        <div className="relative px-6 py-3 sm:px-10 sm:py-4 border-b border-gray-50 flex justify-between items-center bg-white/80 backdrop-blur-md shrink-0 z-10">
                             <div className="flex items-center gap-4">
                                 <div className="p-3 bg-primary rounded-2xl shadow-lg shadow-primary/20">
                                     <Plus className="text-white w-5 h-5 stroke-[3]" />
@@ -649,11 +547,11 @@ const Order = () => {
                             </button>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
+                        <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-y-auto custom-scrollbar bg-slate-50">
                             {/* Scrollable Content Area */}
-                            <div className="flex-1 overflow-y-auto p-6 sm:p-10 space-y-10 custom-scrollbar bg-slate-50">
+                            <div className="flex-1 p-4 sm:p-8 pb-20 space-y-6">
                                 {/* Order Metadata Section */}
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-2">
                                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Order Date</label>
                                         <div className="relative">
@@ -679,16 +577,7 @@ const Order = () => {
                                 </div>
 
                                 {/* Items Section */}
-                                <div className="space-y-6">
-                                    <div className="flex items-center gap-4 mb-2">
-                                        <div className="h-[2px] flex-1 bg-gradient-to-r from-transparent via-gray-100 to-transparent"></div>
-                                        <h3 className="text-[11px] font-black text-primary uppercase tracking-[0.3em] flex items-center gap-3">
-                                            <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_10px_rgba(88,204,2,0.5)]"></span>
-                                            Line Items
-                                            <span className="px-2 py-0.5 bg-primary/10 rounded-lg text-[9px]">{formData.items.length}</span>
-                                        </h3>
-                                        <div className="h-[2px] flex-1 bg-gradient-to-r from-transparent via-gray-100 to-transparent"></div>
-                                    </div>
+                                    <div className="space-y-4">
 
                                     <div className="space-y-5">
                                         {formData.items.map((item, index) => (
@@ -697,7 +586,7 @@ const Order = () => {
                                                 className="group relative animate-in slide-in-from-right-10 duration-300"
                                                 style={{ animationDelay: `${index * 50}ms` }}
                                             >
-                                                <div className="relative flex flex-col gap-6 p-6 sm:p-8 bg-white border border-slate-200/60 sm:rounded-[2rem] shadow-sm hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10 transition-all duration-500">
+                                                <div className="relative flex flex-col gap-4 p-4 sm:p-6 bg-white border border-slate-200/60 sm:rounded-[2rem] shadow-sm hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10 transition-all duration-500 focus-within:z-50">
                                                     {/* Index Marker */}
                                                     <div className="absolute -left-3 top-1/2 -translate-y-1/2 hidden sm:flex items-center justify-center w-6 h-6 bg-slate-50 text-[10px] font-black text-slate-400 rounded-full border border-slate-200 group-hover:bg-primary group-hover:text-white group-hover:border-primary transition-all duration-500">
                                                         {index + 1}
@@ -784,7 +673,7 @@ const Order = () => {
                             </div>
 
                             {/* Glassmorphic Footer */}
-                            <div className="px-6 py-6 sm:px-10 sm:py-8 border-t border-gray-100 bg-white/80 backdrop-blur-md flex flex-col sm:flex-row justify-end items-center gap-4 shrink-0 z-10">
+                            <div className="sticky bottom-0 px-6 py-6 sm:px-10 sm:py-8 border-t border-gray-100 bg-white/95 backdrop-blur-md flex flex-col sm:flex-row justify-end items-center gap-4 shrink-0 z-10 mt-auto shadow-[0_-10px_10px_-10px_rgba(0,0,0,0.02)]">
                                 <button
                                     type="button"
                                     onClick={() => !isSubmitting && setIsModalOpen(false)}

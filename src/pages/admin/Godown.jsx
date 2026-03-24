@@ -1,113 +1,72 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Loader, X, Filter, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
+import { useSheets } from '../../contexts/SheetsContext';
+
+// Helper to get value from object regardless of key casing/spaces
+const getVal = (obj, ...possibleKeys) => {
+    if (!obj) return undefined;
+    const keys = Object.keys(obj);
+    for (const pKey of possibleKeys) {
+        if (obj[pKey] !== undefined) return obj[pKey];
+        if (typeof pKey !== 'string') continue;
+        const normalizedPKey = pKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const foundKey = keys.find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedPKey);
+        if (foundKey) return obj[foundKey];
+    }
+    return undefined;
+};
+
+// Professional Date Formatter (e.g., 25-Feb-2026)
+const formatDisplayDate = (dateStr) => {
+    if (!dateStr || dateStr === '-') return '-';
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        const day = date.getDate().toString().padStart(2, '0');
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const month = months[date.getMonth()];
+        const year = date.getFullYear();
+        return `${day}-${month}-${year}`;
+    } catch (e) {
+        return dateStr;
+    }
+};
 
 const CACHE_KEY = 'godownData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const Godown = () => {
-    const [items, setItems] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
+    const { planning: rawPlanning, isLoading, refreshAll } = useSheets();
     const [searchTerm, setSearchTerm] = useState('');
     const [godownFilter, setGodownFilter] = useState('All');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
 
     const godownTabs = ['All', 'darba', 'DP', 'dusera', 'godown'];
 
-    const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-    const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
+    // --- Derive data from context ---
+    const items = useMemo(() => {
+        return rawPlanning.slice(3).map(item => ({
+            originalIndex: item.originalIndex,
+            dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No') || '-',
+            dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date') || '-',
+            orderNo: getVal(item, 'orderNumber', 'Order No', 'Order Number') || '-',
+            customerName: getVal(item, 'clientName', 'Customer', 'Customer Name') || '-',
+            productName: getVal(item, 'itemName', 'Product', 'Product Name') || '-',
+            orderQty: getVal(item, 'qty', 'Order Qty') || '0',
+            dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty') || '0',
+            godown: getVal(item, 'godownName', 'Godown') || '-',
+            gstIncluded: getVal(item, 'gstIncluded', 'GST Included') || '-'
+        }));
+    }, [rawPlanning]);
 
-    // Helper to get value from object regardless of key casing/spaces
-    const getVal = (obj, ...possibleKeys) => {
-        if (!obj) return undefined;
-        const keys = Object.keys(obj);
-        for (const pKey of possibleKeys) {
-            if (obj[pKey] !== undefined) return obj[pKey];
-            const normalizedPKey = pKey.toLowerCase().replace(/[^a-z0-9]/g, '');
-            const foundKey = keys.find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedPKey);
-            if (foundKey) return obj[foundKey];
-        }
-        return undefined;
-    };
-
-    const formatDisplayDate = (dateStr) => {
-        if (!dateStr || dateStr === '-') return '-';
-        try {
-            const date = new Date(dateStr);
-            if (isNaN(date.getTime())) return dateStr;
-            const day = date.getDate().toString().padStart(2, '0');
-            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            const month = months[date.getMonth()];
-            const year = date.getFullYear();
-            return `${day}-${month}-${year}`;
-        } catch { return dateStr; }
-    };
-
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_DURATION) return data;
-        } catch (e) { /* ignore */ }
-        return null;
-    }, []);
-
-    const saveToCache = useCallback((data) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
-    }, []);
-
-    // Fetch Planning data - Stable Fetcher
-    const fetchPlanning = useCallback(async (force = false) => {
-        setIsLoading(true);
-        try {
-            const response = await fetch(`${API_URL}?sheet=Planning&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
-            const result = await response.json();
-            if (result.success && Array.isArray(result.data)) {
-                const mapped = result.data.slice(3).map(item => ({
-                    originalIndex: item.originalIndex,
-                    dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No') || '-',
-                    dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date') || '-',
-                    orderNo: getVal(item, 'orderNumber', 'Order No', 'Order Number') || '-',
-                    customerName: getVal(item, 'clientName', 'Customer', 'Customer Name') || '-',
-                    productName: getVal(item, 'itemName', 'Product', 'Product Name') || '-',
-                    orderQty: getVal(item, 'qty', 'Order Qty') || '0',
-                    dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty') || '0',
-                    godown: getVal(item, 'godownName', 'Godown') || '-',
-                    gstIncluded: getVal(item, 'gstIncluded', 'GST Included') || '-'
-                }));
-                setItems(mapped);
-            } else {
-                setItems([]);
-            }
-        } catch (error) {
-            console.error('Error fetching Planning:', error);
-            setItems([]);
-        } finally {
-            setIsLoading(false);
-        }
-    }, [API_URL, SHEET_ID]);
-
-    // On mount
     useEffect(() => {
-        const cachedData = loadFromCache();
-        if (cachedData) {
-            setItems(cachedData);
-        } else {
-            fetchPlanning();
-        }
-    }, [loadFromCache, fetchPlanning]);
-
-    // Cache Sync
-    useEffect(() => {
-        if (items.length > 0) saveToCache(items);
-    }, [items, saveToCache]);
+        refreshAll();
+    }, [refreshAll]);
 
     // Manual Refresh
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        fetchPlanning(true);
-    }, [fetchPlanning]);
+        refreshAll(true);
+    }, [refreshAll]);
 
     // Sorting logic
     const requestSort = (key) => {

@@ -2,16 +2,62 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Save, Loader, X, Clock, History, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
+import { useSheets } from '../../contexts/SheetsContext';
 
 const CACHE_KEY = 'skipDeliveredData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
+// Helper to get value from object regardless of key casing/spaces
+const getVal = (obj, ...possibleKeys) => {
+    if (!obj) return undefined;
+    const keys = Object.keys(obj);
+    for (const pKey of possibleKeys) {
+        if (obj[pKey] !== undefined) return obj[pKey];
+        if (typeof pKey !== 'string') continue;
+        const normalizedPKey = pKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const foundKey = keys.find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedPKey);
+        if (foundKey) return obj[foundKey];
+    }
+    return undefined;
+};
+
+// Date Formatter for Display (e.g., 25-Feb-2026)
+const formatDisplayDate = (dateStr) => {
+    if (!dateStr || dateStr === '-') return '-';
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        const day = date.getDate().toString().padStart(2, '0');
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${day}-${months[date.getMonth()]}-${date.getFullYear()}`;
+    } catch {
+        return dateStr;
+    }
+};
+
+// Formatter for <input type="date" />
+const formatDateForInput = (dateStr) => {
+    if (!dateStr || dateStr === '-') return '';
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '';
+        return d.toISOString().split('T')[0];
+    } catch {
+        return '';
+    }
+};
+
 const SkipDelivered = () => {
-    const [pendingItems, setPendingItems] = useState([]);
-    const [historyItems, setHistoryItems] = useState([]);
-    const [activeTab, setActiveTab] = useState('pending');
-    const [isLoading, setIsLoading] = useState(false);
+    const { 
+        orders: rawOrders, 
+        skip: rawSkip, 
+        godowns: contextGodowns, 
+        isLoading, 
+        refreshAll 
+    } = useSheets();
+
     const [isSaving, setIsSaving] = useState(false);
+    const [activeTab, setActiveTab] = useState('pending');
     const [selectedRows, setSelectedRows] = useState({});
     const [editData, setEditData] = useState({});
     const [searchTerm, setSearchTerm] = useState('');
@@ -20,190 +66,66 @@ const SkipDelivered = () => {
     const { showToast } = useToast();
 
     const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-    const MASTER_URL = import.meta.env.VITE_MASTER_URL;
     const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
 
-    const [godowns, setGodowns] = useState([]);
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
 
-    // Helper to get value from object regardless of key casing/spaces
-    const getVal = (obj, ...possibleKeys) => {
-        if (!obj) return undefined;
-        const keys = Object.keys(obj);
-        for (const pKey of possibleKeys) {
-            if (obj[pKey] !== undefined) return obj[pKey];
-            const normalizedPKey = pKey.toLowerCase().replace(/[^a-z0-9]/g, '');
-            const foundKey = keys.find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedPKey);
-            if (foundKey) return obj[foundKey];
-        }
-        return undefined;
-    };
-
-    // Format date for display (e.g., 25-Feb-2026)
-    const formatDisplayDate = (dateStr) => {
-        if (!dateStr || dateStr === '-') return '-';
-        try {
-            const date = new Date(dateStr);
-            if (isNaN(date.getTime())) return dateStr;
-            const day = date.getDate().toString().padStart(2, '0');
-            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            const month = months[date.getMonth()];
-            const year = date.getFullYear();
-            return `${day}-${month}-${year}`;
-        } catch {
-            return dateStr;
-        }
-    };
-
-    // Format date for input value (YYYY-MM-DD)
-    const formatDateForInput = (dateStr) => {
-        if (!dateStr) return '';
-        try {
-            const date = new Date(dateStr);
-            if (isNaN(date.getTime())) return '';
-            const yyyy = date.getFullYear();
-            const mm = String(date.getMonth() + 1).padStart(2, '0');
-            const dd = String(date.getDate()).padStart(2, '0');
-            return `${yyyy}-${mm}-${dd}`;
-        } catch {
-            return '';
-        }
-    };
-
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { pending, history, godowns, timestamp } = JSON.parse(cached);
-            const age = Date.now() - timestamp;
-            if (age < CACHE_DURATION) {
-                return { pending, history, godowns };
-            }
-        } catch (e) { /* ignore */ }
-        return null;
-    }, []);
-
-    const saveToCache = useCallback((pending, history, godownsData) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-            pending,
-            history,
-            godowns: godownsData,
-            timestamp: Date.now()
+    // --- Derive data from context ---
+    const pendingItems = useMemo(() => {
+        return rawOrders.slice(5).filter(item => {
+            const qVal = String(item.columnQ || '').trim();
+            const rVal = String(item.columnR || '').trim();
+            const pendingQty = parseFloat(String(getVal(item, 'planningPendingQty', 11) || '0').replace(/[^0-9.-]+/g, ''));
+            return qVal !== '' && rVal === '' && !isNaN(pendingQty) && pendingQty > 0;
+        }).map((item, idx) => ({
+            originalIndex: idx,
+            orderNumber: item.orderNumber || '-',
+            orderDate: item.orderDate || '-',
+            clientName: item.clientName || '-',
+            godown: item.godownName || '-',
+            itemName: item.itemName || '-',
+            rate: item.rate || '0',
+            orderQty: item.qty || '0',
+            currentStock: item.currentStock || '-',
+            planningQty: item.planningQty || '0',
+            planningPendingQty: item.planningPendingQty || '0',
+            qtyDelivered: item.qtyDelivered || '0',
+            columnQ: item.columnQ || '',
+            columnR: item.columnR || ''
         }));
-    }, []);
+    }, [rawOrders]);
 
-    // Fetch data from ORDER sheet and split into pending/history based on columns Q & R - Stable Fetcher
-    const fetchItems = useCallback(async (force = false) => {
-        setIsLoading(true);
-        try {
-            const [orderRes, skipRes] = await Promise.all([
-                fetch(`${API_URL}?sheet=ORDER&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`),
-                fetch(`${API_URL}?sheet=Skip&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`)
-            ]);
+    const historyItems = useMemo(() => {
+        return rawSkip.slice(1)
+            .filter(row => row && (getVal(row, 'orderNumber', 0)))
+            .map((item, idx) => ({
+                originalIndex: idx,
+                orderNumber: getVal(item, 'orderNumber', 0) || '-',
+                orderDate: getVal(item, 'orderDate', 1) || '-',
+                clientName: getVal(item, 'clientName', 2) || '-',
+                godown: getVal(item, 'godown', 3) || '-',
+                itemName: getVal(item, 'itemName', 4) || '-',
+                rate: getVal(item, 'rate', 5) || '0',
+                orderQty: getVal(item, 'orderQty', 6) || '0',
+                dispatchQty: getVal(item, 'dispatchQty', 7) || '',
+                dispatchDate: getVal(item, 'dispatchDate', 8) || '',
+                godownName: getVal(item, 'godownName', 9) || '-',
+                skipped: true
+            }));
+    }, [rawSkip]);
 
-            const [orderResult, skipResult] = await Promise.all([orderRes.json(), skipRes.json()]);
+    const godowns = useMemo(() => {
+        return [...new Set(contextGodowns.flat().map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== 'godown'))].sort();
+    }, [contextGodowns]);
 
-            if (orderResult.success && Array.isArray(orderResult.data)) {
-                const pending = orderResult.data.slice(5).filter(item => {
-                    const qVal = String(item.columnQ || '').trim();
-                    const rVal = String(item.columnR || '').trim();
-                    const pendingQty = parseFloat(String(getVal(item, 'planningPendingQty', 11) || '0').replace(/[^0-9.-]+/g, ''));
-                    // Only show planned, un-finished items with positive pending quantity
-                    return qVal !== '' && rVal === '' && !isNaN(pendingQty) && pendingQty > 0;
-                }).map((item, idx) => ({
-                    originalIndex: idx,
-                    orderNumber: item.orderNumber || '-',
-                    orderDate: item.orderDate || '-',
-                    clientName: item.clientName || '-',
-                    godown: item.godownName || '-',
-                    itemName: item.itemName || '-',
-                    rate: item.rate || '0',
-                    orderQty: item.qty || '0',
-                    currentStock: item.currentStock || '-',
-                    planningQty: item.planningQty || '0',
-                    planningPendingQty: item.planningPendingQty || '0',
-                    qtyDelivered: item.qtyDelivered || '0',
-                    columnQ: item.columnQ || '',
-                    columnR: item.columnR || ''
-                }));
-                setPendingItems(pending);
-            }
-
-            if (skipResult.success && Array.isArray(skipResult.data)) {
-                const history = skipResult.data.slice(1) // Strictly skip header row
-                    .filter(row => row && (getVal(row, 'orderNumber', 0)))
-                    .map((item, idx) => ({
-                        originalIndex: idx,
-                        orderNumber: getVal(item, 'orderNumber', 0) || '-',
-                        orderDate: getVal(item, 'orderDate', 1) || '-',
-                        clientName: getVal(item, 'clientName', 2) || '-',
-                        godown: getVal(item, 'godown', 3) || '-',
-                        itemName: getVal(item, 'itemName', 4) || '-',
-                        rate: getVal(item, 'rate', 5) || '0',
-                        orderQty: getVal(item, 'orderQty', 6) || '0',
-                        dispatchQty: getVal(item, 'dispatchQty', 7) || '',
-                        dispatchDate: getVal(item, 'dispatchDate', 8) || '',
-                        godownName: getVal(item, 'godownName', 9) || '-',
-                        skipped: true
-                    }));
-                setHistoryItems(history);
-            }
-        } catch (error) {
-            console.error('Error fetching items:', error);
-            setPendingItems([]);
-            setHistoryItems([]);
-        } finally {
-            setIsLoading(false);
-        }
-    }, [API_URL, SHEET_ID]);
-
-    const fetchGodowns = useCallback(async () => {
-        if (!MASTER_URL) return;
-        try {
-            const res = await fetch(`${MASTER_URL}?sheet=Products&col=4`);
-            const json = await res.json();
-            if (json.success && Array.isArray(json.data)) {
-                const sortedGodowns = json.data.sort();
-                setGodowns(sortedGodowns);
-            }
-        } catch (error) {
-            console.error('fetchGodowns error:', error);
-        }
-    }, [MASTER_URL]); // Stable: No state dependencies
-
-    // On mount: load from cache or fetch
     useEffect(() => {
-        const cached = loadFromCache();
-        if (cached) {
-            setPendingItems(cached.pending);
-            setHistoryItems(cached.history);
-            setGodowns(cached.godowns);
-        } else {
-            fetchItems();
-            fetchGodowns();
-        }
-    }, [loadFromCache, fetchItems, fetchGodowns]);
+        refreshAll();
+    }, [refreshAll]);
 
-    // Dedicated Cache Sync Effect
-    useEffect(() => {
-        if (pendingItems.length > 0 || historyItems.length > 0 || godowns.length > 0) {
-            saveToCache(pendingItems, historyItems, godowns);
-        }
-    }, [pendingItems, historyItems, godowns, saveToCache]);
-
-    // Independent UI State Management - Clear selection/edit data on tab switch
-    useEffect(() => {
-        setSelectedRows({});
-        setEditData({});
-    }, [activeTab]);
-
-    // --- Manual refresh ---
+    // Manual Refresh: Trigger global state update
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        fetchItems(true);
-        fetchGodowns();
-    }, [fetchItems, fetchGodowns]);
+        refreshAll(true);
+    }, [refreshAll]);
 
     // Unique filter options (combine both pending and history)
     const allUniqueClients = useMemo(() =>
@@ -355,9 +277,8 @@ const SkipDelivered = () => {
                 throw new Error(result.error || 'Unknown error');
             }
 
-            // On success, invalidate cache and refetch
-            sessionStorage.removeItem(CACHE_KEY);
-            await fetchItems(true);
+            // Success: Update global context
+            await refreshAll(true);
             setSelectedRows({});
             setEditData({});
 

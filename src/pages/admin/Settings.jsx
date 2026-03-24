@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { UserPlus, Shield, Check, X, Trash2, Pencil, RefreshCw, Loader, Save, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
+import { useSheets } from '../../contexts/SheetsContext';
 
 const CACHE_KEY = 'settingsUserData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const Settings = () => {
-    const [users, setUsers] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
+    const { users: rawUsers, isLoading, refreshAll } = useSheets();
     const [isSaving, setIsSaving] = useState(false);
     const [newUser, setNewUser] = useState({ name: '', id: '', password: '', role: 'user', pageAccess: ['Dashboard'] });
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -20,16 +20,9 @@ const Settings = () => {
     const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
 
     const allPages = [
-        "Dashboard",
-        "Order",
-        "Dispatch Planning",
-        "Inform to Party Before Dispatch",
-        "Dispatch Completed",
-        "Inform to Party After Dispatch",
-        "Godown",
-        "PC Report",
-        "Skip Delivered",
-        "Settings"
+        "Dashboard", "Order", "Dispatch Planning", "Inform to Party Before Dispatch",
+        "Dispatch Completed", "Inform to Party After Dispatch", "Godown",
+        "PC Report", "Skip Delivered", "Settings"
     ];
 
     // Helper to get value from object regardless of key casing/spaces
@@ -45,70 +38,32 @@ const Settings = () => {
         return undefined;
     };
 
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_DURATION) return data;
-        } catch (e) { /* ignore */ }
-        return null;
-    }, []);
+    // Derive users from context
+    const users = useMemo(() => {
+        return rawUsers.map((item, idx) => {
+            const rawAccess = getVal(item, 'pageAccess', 'Access') || '';
+            const pageAccess = Array.isArray(rawAccess)
+                ? rawAccess
+                : String(rawAccess).split(',').map(s => s.trim()).filter(Boolean);
 
-    const saveToCache = useCallback((data) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
-    }, []);
-
-    // Stable Fetcher
-    const fetchUsers = useCallback(async (force = false) => {
-        if (!force) {
-            const cached = loadFromCache();
-            if (cached) {
-                setUsers(cached);
-                return;
-            }
-        }
-
-        setIsLoading(true);
-        try {
-            const response = await fetch(`${API_URL}?sheet=Login&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
-            const result = await response.json();
-            if (result.success && Array.isArray(result.data)) {
-                // Map from B, C, D, E, F
-                const mapped = result.data.map((item, idx) => {
-                    const rawAccess = getVal(item, 'pageAccess', 'Access') || '';
-                    const pageAccess = Array.isArray(rawAccess)
-                        ? rawAccess
-                        : String(rawAccess).split(',').map(s => s.trim()).filter(Boolean);
-
-                    return {
-                        originalIndex: item.originalIndex || idx,
-                        name: item.name || getVal(item, 'userName', 'User Name') || '-',
-                        id: item.id || getVal(item, 'userId', 'User ID') || '-',
-                        password: item.password || '-',
-                        role: item.role || 'user',
-                        pageAccess
-                    };
-                });
-                // Filter out header or empty rows if necessary (usually slice(0) is fine for mode=table)
-                const validUsers = mapped.filter(u => u.id !== '-' && u.id !== 'User ID');
-                setUsers(validUsers);
-                saveToCache(validUsers);
-            } else {
-                setUsers([]);
-            }
-        } catch (error) {
-            console.error('Error fetching users:', error);
-            showToast("Failed to fetch users", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    }, [API_URL, SHEET_ID, loadFromCache, saveToCache, showToast]);
+            return {
+                originalIndex: item.originalIndex || idx,
+                name: item.name || getVal(item, 'userName', 'User Name') || '-',
+                id: item.id || getVal(item, 'userId', 'User ID') || '-',
+                password: item.password || '-',
+                role: item.role || 'user',
+                pageAccess
+            };
+        }).filter(u => u.id !== '-' && u.id !== 'User ID');
+    }, [rawUsers]);
 
     useEffect(() => {
-        fetchUsers();
-    }, [fetchUsers]);
+        refreshAll();
+    }, [refreshAll]);
+
+    const handleRefresh = useCallback(() => {
+        refreshAll(true);
+    }, [refreshAll]);
 
     const filteredUsers = useMemo(() => {
         return users.filter(user =>
@@ -149,8 +104,7 @@ const Settings = () => {
             if (!result.success) throw new Error(result.error || 'Failed to save user');
 
             showToast(editingUser ? "User updated successfully" : "User added successfully");
-            sessionStorage.removeItem(CACHE_KEY);
-            await fetchUsers(true);
+            await refreshAll(true);
             setIsModalOpen(false);
             setEditingUser(null);
             setShowPassword(false);
@@ -194,8 +148,7 @@ const Settings = () => {
             if (!result.success) throw new Error(result.error || 'Failed to delete user');
 
             showToast("User removed", "error");
-            sessionStorage.removeItem(CACHE_KEY);
-            await fetchUsers(true);
+            await refreshAll(true);
         } catch (error) {
             console.error('Error deleting user:', error);
             showToast("Failed to delete: " + error.message, "error");
@@ -232,7 +185,7 @@ const Settings = () => {
 
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={() => fetchUsers(true)}
+                        onClick={handleRefresh}
                         className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200"
                     >
                         <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />

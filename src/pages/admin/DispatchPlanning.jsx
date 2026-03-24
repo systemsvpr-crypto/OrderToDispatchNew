@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Save, History, ClipboardList, X, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
+import { useSheets } from '../../contexts/SheetsContext';
 
 const GODOWNS = ['Godown 1', 'Godown 2', 'Main Store', 'North Warehouse'];
 
@@ -41,8 +42,26 @@ const getVal = (obj, ...possibleKeys) => {
 };
 
 const DispatchPlanning = () => {
-    const [orders, setOrders] = useState([]);
-    const [dispatchHistory, setDispatchHistory] = useState([]);
+    const { 
+        orders: rawOrders, 
+        planning: rawPlanning, 
+        isLoading, 
+        refreshAll 
+    } = useSheets();
+
+    const formatDisplayDate = (dateStr) => {
+        if (!dateStr || dateStr === '-') return '-';
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return dateStr;
+            const day = date.getDate().toString().padStart(2, '0');
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const month = months[date.getMonth()];
+            const year = date.getFullYear();
+            return `${day}-${month}-${year}`;
+        } catch { return dateStr; }
+    };
+
     const [activeTab, setActiveTab] = useState('pending');
     const [selectedRows, setSelectedRows] = useState({});
     const [editData, setEditData] = useState({});
@@ -57,74 +76,33 @@ const DispatchPlanning = () => {
     const [dateFilter, setDateFilter] = useState('');
     const [stockLocationFilter, setStockLocationFilter] = useState('');
 
-    const [isLoading, setIsLoading] = useState(false);
+    // Derivative state: Pending Orders from global 'ORDER' data
+    const orders = useMemo(() => {
+        const mappedData = rawOrders.slice(5).map((item, index) => ({
+            ...item,
+            originalIndex: index,
+            orderNo: item.orderNumber,
+            qty: item.qty || 0
+        }));
 
-    const fetchOrders = useCallback(async (forceRefresh = false) => {
-        console.log('[DispatchPlanning] Fetching from:', API_URL);
-        setIsLoading(true);
-        try {
-            // Fetch Pending Orders from 'ORDER'
-            const response = await fetch(`${API_URL}?sheet=ORDER&mode=table`);
-            const result = await response.json();
-            let newOrders = [];
-            let newHistory = [];
+        // Filter: Column Q is not null AND Column R is null AND Remaining Planning Qty > 0
+        return mappedData.filter(item => {
+            const hasQ = item.columnQ !== undefined && item.columnQ !== null && String(item.columnQ).trim() !== '';
+            const hasR = item.columnR !== undefined && item.columnR !== null && String(item.columnR).trim() !== '';
 
-            if (result.success) {
-                const mappedData = result.data.slice(4).map((item, index) => ({
-                    ...item,
-                    originalIndex: index,
-                    orderNo: item.orderNumber,
-                    qty: item.qty || 0
-                }));
+            const pendingQty = parseFloat(String(getVal(item, 'planningPendingQty', 11) || '0').replace(/[^0-9.-]+/g, ''));
+            // Only show planned, un-finished items with positive pending quantity
+            return hasQ && !hasR && !isNaN(pendingQty) && pendingQty > 0;
+        });
+    }, [rawOrders]);
 
-                // Filter: Column Q is not null AND Column R is null AND Remaining Planning Qty > 0
-                newOrders = mappedData.filter(item => {
-                    const hasQ = item.columnQ !== undefined && item.columnQ !== null && String(item.columnQ).trim() !== '';
-                    const hasR = item.columnR !== undefined && item.columnR !== null && String(item.columnR).trim() !== '';
-
-                    const pendingQty = parseFloat(String(getVal(item, 'planningPendingQty', 11) || '0').replace(/[^0-9.-]+/g, ''));
-                    // Only show planned, un-finished items with positive pending quantity
-                    return hasQ && !hasR && !isNaN(pendingQty) && pendingQty > 0;
-                });
-            }
-
-            // Fetch History from 'Planning'
-            const historyResponse = await fetch(`${API_URL}?sheet=Planning&mode=table`);
-            const historyResult = await historyResponse.json();
-            if (historyResult.success) {
-                newHistory = historyResult.data.slice(3).map(item => ({
-                    ...item,
-                    orderNo: item.orderNumber || item.orderNo
-                }));
-            }
-
-            setOrders(newOrders);
-            setDispatchHistory(newHistory);
-        } catch (error) {
-            console.error('[DispatchPlanning] Fetch Error:', error);
-        } finally {
-            setIsLoading(false);
-        }
-    }, []); // Stable Fetcher
-
-    // Load cached data on mount, or fetch if stale/missing
-    useEffect(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (cached) {
-            try {
-                const { orders: cachedOrders, dispatchHistory: cachedHistory, timestamp } = JSON.parse(cached);
-                const age = Date.now() - timestamp;
-                if (age < CACHE_DURATION) {
-                    setOrders(cachedOrders);
-                    setDispatchHistory(cachedHistory);
-                    return; // Use cache, skip fetch
-                }
-            } catch (e) {
-                // Cache corrupted – ignore and fetch fresh
-            }
-        }
-        fetchOrders();
-    }, [fetchOrders]);
+    // Derivative state: History from global 'Planning' data
+    const dispatchHistory = useMemo(() => {
+        return rawPlanning.slice(3).map(item => ({
+            ...item,
+            orderNo: item.orderNumber || item.orderNo
+        }));
+    }, [rawPlanning]);
 
     // Independent UI State Management - Clear selection/edit data on tab switch
     useEffect(() => {
@@ -132,18 +110,10 @@ const DispatchPlanning = () => {
         setEditData({});
     }, [activeTab]);
 
-    // Dedicated Cache Sync Effect: Watches state changes and updates sessionStorage
-    // This breaks the circular dependency between fetchers and cache
+    // Ensure data is loaded on mount
     useEffect(() => {
-        if (orders.length > 0 || dispatchHistory.length > 0) {
-            const cacheData = {
-                orders: orders,
-                dispatchHistory: dispatchHistory,
-                timestamp: Date.now()
-            };
-            sessionStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
-        }
-    }, [orders, dispatchHistory]);
+        refreshAll();
+    }, [refreshAll]);
 
     // Get unique values for filters - Memoized
     const allUniqueClients = useMemo(() => [...new Set([...orders.map(o => o.clientName), ...dispatchHistory.map(h => h.clientName)])].sort(), [orders, dispatchHistory]);
@@ -313,9 +283,8 @@ const DispatchPlanning = () => {
             const result = await response.json();
             if (result.success) {
                 showToast('Planning saved successfully!', 'success');
-                // Invalidate cache and refetch
-                sessionStorage.removeItem(CACHE_KEY);
-                await fetchOrders();
+                // Refresh global state
+                await refreshAll(true);
                 setSelectedRows({});
                 setEditData({});
             } else {
@@ -327,13 +296,12 @@ const DispatchPlanning = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [selectedRows, orders, editData, fetchOrders]);
+    }, [selectedRows, orders, editData, refreshAll]);
 
-    // Manual refresh: ignore cache and fetch fresh data
+    // Manual refresh: trigger global reload
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        fetchOrders(true);
-    }, [fetchOrders]);
+        refreshAll(true);
+    }, [refreshAll]);
 
     const clearFilters = useCallback(() => {
         setSearchTerm('');

@@ -2,14 +2,35 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Mail, History, Save, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
+import { useSheets } from '../../contexts/SheetsContext';
 
 const CACHE_KEY = 'afterDispatchInformData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
+// Professional Date Formatter (e.g., 25-Feb-2026)
+const formatDisplayDate = (dateStr) => {
+    if (!dateStr || dateStr === '-') return '-';
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        const day = date.getDate().toString().padStart(2, '0');
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const month = months[date.getMonth()];
+        const year = date.getFullYear();
+        return `${day}-${month}-${year}`;
+    } catch (e) {
+        return dateStr;
+    }
+};
+
 const AfterDispatchInformToParty = () => {
-    const [pendingItems, setPendingItems] = useState([]);
-    const [historyItems, setHistoryItems] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
+    const { 
+        planning: rawPlanning, 
+        afterDispatch: rawAfterDispatch, 
+        isLoading, 
+        refreshAll 
+    } = useSheets();
+
     const [isSaving, setIsSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('pending');
     const [selectedRows, setSelectedRows] = useState({});
@@ -22,123 +43,59 @@ const AfterDispatchInformToParty = () => {
     const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
     const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
 
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { pending, history, timestamp } = JSON.parse(cached);
-            const age = Date.now() - timestamp;
-            if (age < CACHE_DURATION) return { pending, history };
-        } catch (e) { /* ignore */ }
-        return null;
-    }, []);
+    // --- Derive data from context ---
+    const pendingItems = useMemo(() => {
+        return rawPlanning.slice(3).map((item, idx) => ({
+            originalIndex: idx,
+            sheetRow: item.sheetRow,
+            dispatchNo: item.dispatchNo || '-',
+            dispatchDate: item.dispatchDate || '-',
+            orderNo: item.orderNumber || '-',
+            customerName: item.clientName || '-',
+            productName: item.itemName || '-',
+            godown: item.godownName || '-',
+            crmName: item.crmName || '-',
+            orderQty: item.qty || '0',
+            dispatchQty: item.dispatchQty || '0',
+            columnT: item.columnT || '',
+            columnU: item.columnU || ''
+        })).filter(item => {
+            const colT = String(item.columnT || '').trim();
+            const colU = String(item.columnU || '').trim();
+            return colT === '' || colU === '';
+        });
+    }, [rawPlanning]);
 
-    const saveToCache = useCallback((pending, history) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-            pending,
-            history,
-            timestamp: Date.now()
+    const historyItems = useMemo(() => {
+        const hasHeaders = rawAfterDispatch.length > 0 &&
+            (String(rawAfterDispatch[0].dispatchNo || '').toLowerCase().includes('dispatch') ||
+                String(rawAfterDispatch[0][0] || '').toLowerCase().includes('dispatch'));
+
+        const processData = hasHeaders ? rawAfterDispatch.slice(1) : rawAfterDispatch;
+
+        return processData.map((item, idx) => ({
+            originalIndex: idx,
+            dispatchNo: item.dispatchNo || (Array.isArray(item) ? item[0] : '-'),
+            dispatchDate: item.dispatchDate || (Array.isArray(item) ? item[1] : '-'),
+            orderNo: item.orderNo || (Array.isArray(item) ? item[2] : '-'),
+            customerName: item.customer || item.customerName || (Array.isArray(item) ? item[3] : '-'),
+            productName: item.productName || (Array.isArray(item) ? item[4] : '-'),
+            godown: item.godown || (Array.isArray(item) ? item[5] : '-'),
+            crmName: item.crmName || (Array.isArray(item) ? item[6] : '-'),
+            orderQty: item.orderQty || (Array.isArray(item) ? item[7] : '0'),
+            dispatchQty: item.dispatchQty || (Array.isArray(item) ? item[8] : '0'),
+            notified: true
         }));
-    }, []);
+    }, [rawAfterDispatch]);
 
-    // --- Fetch data ---
-    const fetchPendingItems = useCallback(async (force = false) => {
-        setIsLoading(true);
-        try {
-            if (!API_URL) return;
-
-            const [planningRes, historyRes] = await Promise.all([
-                fetch(`${API_URL}?sheet=Planning&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`),
-                fetch(`${API_URL}?sheet=After%20Dispatch&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`)
-            ]);
-
-            const [planningResult, historyResult] = await Promise.all([
-                planningRes.json(),
-                historyRes.json()
-            ]);
-
-            // Handling Pending from Planning Sheet
-            if (planningResult.success && Array.isArray(planningResult.data)) {
-                const planningData = planningResult.data.slice(3);
-                const pending = planningData.map((item, idx) => ({
-                    originalIndex: idx,
-                    sheetRow: item.sheetRow,
-                    dispatchNo: item.dispatchNo || '-',
-                    dispatchDate: item.dispatchDate || '-',
-                    orderNo: item.orderNumber || '-',
-                    customerName: item.clientName || '-',
-                    productName: item.itemName || '-',
-                    godown: item.godownName || '-',
-                    crmName: item.crmName || '-',
-                    orderQty: item.qty || '0',
-                    dispatchQty: item.dispatchQty || '0',
-                    columnT: item.columnT || '',
-                    columnU: item.columnU || ''
-                })).filter(item => {
-                    const colT = String(item.columnT || '').trim();
-                    const colU = String(item.columnU || '').trim();
-                    // Show in pending if: T is empty OR U is empty (only skip if BOTH have values)
-                    return colT === '' || colU === '';
-                });
-                setPendingItems(pending);
-            }
-
-            // Handling History from After Dispatch Sheet
-            if (historyResult.success && Array.isArray(historyResult.data)) {
-                // If it's mode=table, it might contain headers if they aren't handled by backend
-                const data = historyResult.data;
-                const hasHeaders = data.length > 0 &&
-                    (String(data[0].dispatchNo || '').toLowerCase().includes('dispatch') ||
-                        String(data[0][0] || '').toLowerCase().includes('dispatch'));
-
-                const processData = hasHeaders ? data.slice(1) : data;
-
-                const history = processData.map((item, idx) => ({
-                    originalIndex: idx,
-                    dispatchNo: item.dispatchNo || (Array.isArray(item) ? item[0] : '-'),
-                    dispatchDate: item.dispatchDate || (Array.isArray(item) ? item[1] : '-'),
-                    orderNo: item.orderNo || (Array.isArray(item) ? item[2] : '-'),
-                    customerName: item.customer || item.customerName || (Array.isArray(item) ? item[3] : '-'),
-                    productName: item.productName || (Array.isArray(item) ? item[4] : '-'),
-                    godown: item.godown || (Array.isArray(item) ? item[5] : '-'),
-                    crmName: item.crmName || (Array.isArray(item) ? item[6] : '-'),
-                    orderQty: item.orderQty || (Array.isArray(item) ? item[7] : '0'),
-                    dispatchQty: item.dispatchQty || (Array.isArray(item) ? item[8] : '0'),
-                    notified: true
-                }));
-                setHistoryItems(history);
-            }
-        } catch (error) {
-            console.error('Error fetching data:', error);
-        } finally {
-            setIsLoading(false);
-        }
-    }, [API_URL, SHEET_ID]); // Stable fetcher
-
-    // On mount: load from cache or fetch
     useEffect(() => {
-        const cached = loadFromCache();
-        if (cached) {
-            setPendingItems(cached.pending);
-            setHistoryItems(cached.history);
-        } else {
-            fetchPendingItems();
-        }
-    }, [loadFromCache, fetchPendingItems]);
-
-    // Cache sync effect: automatically save whenever state changes
-    useEffect(() => {
-        if (pendingItems.length > 0 || historyItems.length > 0) {
-            saveToCache(pendingItems, historyItems);
-        }
-    }, [pendingItems, historyItems, saveToCache]);
+        refreshAll();
+    }, [refreshAll]);
 
     // --- Manual refresh ---
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        fetchPendingItems(true);
-    }, [fetchPendingItems]);
+        refreshAll(true);
+    }, [refreshAll]);
 
     // --- Unique filter values ---
     const allUniqueClients = useMemo(() =>
@@ -245,41 +202,16 @@ const AfterDispatchInformToParty = () => {
                 })
             });
 
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Unknown error');
-
-            // Optimistic update
-            const newlyNotified = selectedItems.map(item => ({ ...item, notified: true }));
-            const remainingPending = pendingItems.filter(item => !selectedRows[item.originalIndex]);
-            const newHistory = [...historyItems, ...newlyNotified];
-            setPendingItems(remainingPending);
-            setHistoryItems(newHistory);
-            setSelectedRows({});
-
             showToast('Notification status updated successfully!', 'success');
 
-            // Refresh data to sync with backend
-            handleRefresh();
+            // Global refresh to sync across all pages
+            await refreshAll(true);
+            setSelectedRows({});
         } catch (error) {
             console.error('Error saving to After Dispatch:', error);
             showToast(`Failed to save: ${error.message}`, 'error');
         } finally {
             setIsSaving(false);
-        }
-    };
-
-    const formatDisplayDate = (dateStr) => {
-        if (!dateStr || dateStr === '-') return '-';
-        try {
-            const date = new Date(dateStr);
-            if (isNaN(date.getTime())) return dateStr;
-            return date.toLocaleDateString('en-GB', {
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric'
-            }).replace(/ /g, '-');
-        } catch {
-            return dateStr;
         }
     };
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { CheckCircle, History, Save, Loader, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
+import { useSheets } from '../../contexts/SheetsContext';
 
 // Constants outside component — never recreated
 const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
@@ -56,15 +57,19 @@ const formatDateToYYYYMMDD = (dateVal) => {
 };
 
 const DispatchComplete = () => {
-    const [orders, setOrders] = useState([]);
-    const [historyItems, setHistoryItems] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
+    const { 
+        planning: rawPlanning, 
+        dispatchCompleted: rawHistory, 
+        itemNames: contextItemNames, 
+        godowns: contextGodowns, 
+        isLoading, 
+        refreshAll 
+    } = useSheets();
+
     const [isSaving, setIsSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('pending');
     const [selectedRows, setSelectedRows] = useState({});
     const [editData, setEditData] = useState({});
-    const [itemNames, setItemNames] = useState([]);
-    const [godowns, setGodowns] = useState([]);
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
     const { showToast } = useToast();
 
@@ -72,269 +77,73 @@ const DispatchComplete = () => {
     const [clientFilter, setClientFilter] = useState('');
     const [godownFilter, setGodownFilter] = useState('');
 
-    // Refs to prevent redundant fetches within same component instance
-    const hasFetchedOrders = useRef(false);
-    const hasFetchedHistory = useRef(false);
-    const hasFetchedMaster = useRef(false);
+    // Derive pending orders from context
+    const orders = useMemo(() => {
+        return rawPlanning.slice(3)
+            .map((item, idx) => ({
+                ...item,
+                dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No'),
+                dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date'),
+                orderNumber: getVal(item, 'orderNumber', 'orderNo', 'Order No'),
+                clientName: getVal(item, 'clientName', 'customer', 'Customer Name', 'Client Name'),
+                itemName: getVal(item, 'itemName', 'product', 'Product Name', 'Item Name'),
+                godownName: getVal(item, 'godownName', 'godown', 'Godown Name'),
+                qty: getVal(item, 'qty', 'orderQty', 'Order Qty'),
+                dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty'),
+                crmName: getVal(item, 'crmName', 'CRM Name'),
+                columnO: item.columnO || '',
+                columnP: item.columnP || '',
+                sheetRow: item.sheetRow || (idx + 4),
+                status: String(getVal(item, 'status', 'Status') || '').toLowerCase(),
+                originalIndex: idx
+            }))
+            .filter(item => {
+                const colOValue = String(item.columnO || '').trim();
+                const colPValue = String(item.columnP || '').trim();
+                const bothNotNull = colOValue !== '' && colOValue !== '-' && colPValue !== '' && colPValue !== '-';
+                return !bothNotNull;
+            });
+    }, [rawPlanning]);
 
-    // Helper to load cached data
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { orders: cachedOrders, history: cachedHistory, itemNames: cachedItems, godowns: cachedGodowns, timestamp } = JSON.parse(cached);
-            const age = Date.now() - timestamp;
-            if (age < CACHE_DURATION) {
-                return { orders: cachedOrders, history: cachedHistory, itemNames: cachedItems, godowns: cachedGodowns };
-            }
-        } catch (e) {
-            // Cache corrupted – ignore
-        }
-        return null;
-    }, []);
+    // Derive history from context
+    const historyItems = useMemo(() => {
+        // Handle mode=table data structure (if headers exist)
+        const hasHeaders = rawHistory.length > 0 && Array.isArray(rawHistory[0]) &&
+            (String(rawHistory[0][0]).toLowerCase().includes('planning') ||
+                String(rawHistory[0][1]).toLowerCase().includes('dispatch'));
 
-    // Save data to cache - now a simple helper used by the sync effect
-    const syncCache = useCallback((ordersData, historyData, itemsData, godownsData) => {
-        const cacheData = {
-            orders: ordersData,
-            history: historyData,
-            itemNames: itemsData,
-            godowns: godownsData,
-            timestamp: Date.now()
-        };
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
-    }, []);
+        const processArray = hasHeaders ? rawHistory.slice(1) : rawHistory;
 
-    // Fetch pending orders (Planning sheet, excluding completed)
-    const fetchOrders = useCallback(async (force = false) => {
-        if (hasFetchedOrders.current && !force) return;
-        setIsLoading(true);
-        try {
-            const response = await fetch(`${API_URL}?sheet=Planning&mode=table`, { redirect: 'follow' });
-            const text = await response.text();
+        return processArray.map((item, idx) => ({
+            ...item,
+            dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No'),
+            dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date'),
+            completeDate: getVal(item, 'completeDate', 'Complete Date', 'Date'),
+            customer: getVal(item, 'customer', 'Customer', 'Customer Name'),
+            product: getVal(item, 'product', 'Product', 'Product Name'),
+            godown: getVal(item, 'godown', 'Godown Name', 'Godown'),
+            orderQty: getVal(item, 'orderQty', 'Order Qty'),
+            dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty'),
+            status: getVal(item, 'status', 'Status'),
+            crmName: getVal(item, 'crmName', 'CRM Name'),
+            originalIndex: idx
+        }));
+    }, [rawHistory]);
 
-            let result;
-            try {
-                result = JSON.parse(text);
-            } catch (e) {
-                console.error('[DispatchComplete] JSON Parse Error:', text);
-                return;
-            }
+    // Master data from context
+    const itemNames = useMemo(() => {
+        const flatItems = contextItemNames.flat().map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== 'product' && v.toLowerCase() !== 'item name');
+        return [...new Set(flatItems)].sort();
+    }, [contextItemNames]);
 
-            let dataArray = [];
-            if (Array.isArray(result)) dataArray = result;
-            else if (result.success && Array.isArray(result.data)) dataArray = result.data;
-            else if (result.data && Array.isArray(result.data)) dataArray = result.data;
-            else if (result.rows && Array.isArray(result.rows)) dataArray = result.rows;
+    const godowns = useMemo(() => {
+        const flatGodowns = contextGodowns.flat().map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== 'godown');
+        return [...new Set(flatGodowns)].sort();
+    }, [contextGodowns]);
 
-            let newOrders = [];
-            if (dataArray && dataArray.length > 0) {
-                const hasHeaders = Array.isArray(dataArray[0]) &&
-                    (String(dataArray[0][0]).toLowerCase().includes('dispatch') ||
-                        String(dataArray[0][1]).toLowerCase().includes('no'));
-
-                const processArray = hasHeaders ? dataArray.slice(1) : dataArray;
-
-                newOrders = processArray.slice(3)
-                    .map((item, idx) => {
-                        if (Array.isArray(item)) {
-                            return {
-                                dispatchNo: item[0] || '-',
-                                dispatchDate: item[1] || '-',
-                                orderNumber: item[2] || '-',
-                                clientName: item[3] || '-',
-                                itemName: item[4] || '-',
-                                godownName: item[5] || '-',
-                                qty: item[6] || '0',
-                                dispatchQty: item[7] || '0',
-                                crmName: item[8] || '-',
-                                columnO: item[14] || '',
-                                columnP: item[15] || '',
-                                sheetRow: item[9] || (idx + (hasHeaders ? 2 : 1)), // Adjusted for no slice(3)
-                                status: getVal(item, 'status', 'Status', 17) || '', // Map status for filter
-                                originalIndex: idx
-                            };
-                        } else {
-                            const columnO = getVal(item, 'columnO', 'O');
-                            const columnP = getVal(item, 'columnP', 'P');
-                            const status = String(getVal(item, 'status', 'Status') || '').toLowerCase();
-                            return {
-                                ...item,
-                                dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No'),
-                                dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date'),
-                                orderNumber: getVal(item, 'orderNumber', 'orderNo', 'Order No'),
-                                clientName: getVal(item, 'clientName', 'customer', 'Customer Name', 'Client Name'),
-                                itemName: getVal(item, 'itemName', 'product', 'Product Name', 'Item Name'),
-                                godownName: getVal(item, 'godownName', 'godown', 'Godown Name'),
-                                qty: getVal(item, 'qty', 'orderQty', 'Order Qty'),
-                                dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty'),
-                                crmName: getVal(item, 'crmName', 'CRM Name'),
-                                columnO: columnO,
-                                columnP: columnP,
-                                status: status,
-                                originalIndex: idx
-                            };
-                        }
-                    })
-                    .filter(item => {
-                        // Hide if both Column O and Column P are not null
-                        const colOValue = String(getVal(item, 'columnO', 14) || '').trim();
-                        const colPValue = String(getVal(item, 'columnP', 15) || '').trim();
-                        const bothNotNull = colOValue !== '' && colOValue !== '-' && colPValue !== '' && colPValue !== '-';
-                        return !bothNotNull;
-                    });
-            }
-            setOrders(newOrders);
-            hasFetchedOrders.current = true;
-        } catch (error) {
-            console.error('Fetch Exception:', error);
-        } finally {
-            setIsLoading(false);
-        }
-    }, []); // Empty dependencies = Stable Fetcher
-
-    // Fetch history from Dispatch Completed sheet
-    const fetchHistory = useCallback(async (force = false) => {
-        if (hasFetchedHistory.current && !force) return;
-        setIsLoading(true);
-        try {
-            const response = await fetch(`${API_URL}?sheet=Dispatch%20Completed&mode=table`, { redirect: 'follow' });
-            const text = await response.text();
-
-            let result;
-            try {
-                result = JSON.parse(text);
-            } catch (e) {
-                console.error('[DispatchComplete] History JSON Parse Error:', text);
-                return;
-            }
-
-            let dataArray = [];
-            if (Array.isArray(result)) dataArray = result;
-            else if (result.success && Array.isArray(result.data)) dataArray = result.data;
-            else if (result.data && Array.isArray(result.data)) dataArray = result.data;
-            else if (result.rows && Array.isArray(result.rows)) dataArray = result.rows;
-
-            let newHistory = [];
-            if (dataArray && dataArray.length > 0) {
-                const hasHeaders = Array.isArray(dataArray[0]) &&
-                    (String(dataArray[0][0]).toLowerCase().includes('planning') ||
-                        String(dataArray[0][1]).toLowerCase().includes('dispatch'));
-
-                const processArray = hasHeaders ? dataArray.slice(1) : dataArray;
-
-                newHistory = processArray.map((item, idx) => {
-                    if (Array.isArray(item)) {
-                        return {
-                            dispatchNo: item[1] || '-',
-                            dispatchDate: item[2] || '-',
-                            completeDate: item[3] || '-',
-                            customer: item[4] || '-',
-                            product: item[5] || '-',
-                            godown: item[6] || '-',
-                            orderQty: item[7] || '0',
-                            dispatchQty: item[8] || '0',
-                            status: item[9] || 'approved',
-                            crmName: item[10] || '-',
-                            originalIndex: idx
-                        };
-                    } else {
-                        return {
-                            ...item,
-                            dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No'),
-                            dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date'),
-                            completeDate: getVal(item, 'completeDate', 'Complete Date', 'Date'),
-                            customer: getVal(item, 'customer', 'Customer', 'Customer Name'),
-                            product: getVal(item, 'product', 'Product', 'Product Name'),
-                            godown: getVal(item, 'godown', 'Godown Name', 'Godown'),
-                            orderQty: getVal(item, 'orderQty', 'Order Qty'),
-                            dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty'),
-                            status: getVal(item, 'status', 'Status'),
-                            crmName: getVal(item, 'crmName', 'CRM Name'),
-                            originalIndex: idx
-                        };
-                    }
-                });
-            }
-            setHistoryItems(newHistory);
-            hasFetchedHistory.current = true;
-        } catch (error) {
-            console.error('History Fetch Exception:', error);
-        } finally {
-            setIsLoading(false);
-        }
-    }, []); // Empty dependencies = Stable Fetcher
-
-    const fetchMasterData = useCallback(async () => {
-        if (hasFetchedMaster.current || !MASTER_URL) return;
-        try {
-            const [productsRes, godownsRes] = await Promise.all([
-                fetch(`${MASTER_URL}?sheet=Products`, { redirect: 'follow' }),
-                fetch(`${MASTER_URL}?sheet=Products&col=4`, { redirect: 'follow' })
-            ]);
-
-            const productsResult = await productsRes.json();
-            let newItems = [];
-            if (productsResult.success && productsResult.data) {
-                newItems = productsResult.data
-                    .slice(1)
-                    .map(row => Array.isArray(row) ? row[0] : row)
-                    .filter(val => val && String(val).trim() !== "");
-                newItems = [...new Set(newItems)].sort();
-            }
-
-            const godownsResult = await godownsRes.json();
-            let newGodowns = [];
-            if (godownsResult.success && godownsResult.data) {
-                newGodowns = godownsResult.data
-                    .flat()
-                    .map(val => String(val).trim())
-                    .filter(val => val && val.toLowerCase() !== "godown");
-                newGodowns = [...new Set(newGodowns)].sort();
-            }
-
-            setItemNames(newItems);
-            setGodowns(newGodowns);
-            hasFetchedMaster.current = true;
-        } catch (error) {
-            console.error('Error fetching master data:', error);
-        }
-    }, []); // Stable fetcher
-
-    // On mount: try to load from cache, otherwise fetch
     useEffect(() => {
-        const cached = loadFromCache();
-        if (cached) {
-            setOrders(cached.orders);
-            setHistoryItems(cached.history);
-            setItemNames(cached.itemNames);
-            setGodowns(cached.godowns);
-            // Mark refs as fetched to avoid immediate re-fetches
-            hasFetchedOrders.current = true;
-            hasFetchedHistory.current = true;
-            hasFetchedMaster.current = true;
-        } else {
-            fetchOrders();
-            fetchMasterData();
-        }
-    }, [loadFromCache, fetchOrders, fetchMasterData]);
-
-    // Dedicated Cache Sync Effect: Watches data changes and updates sessionStorage
-    // This breaks the circular dependency between fetchers and cache
-    useEffect(() => {
-        if (orders.length > 0 || historyItems.length > 0 || itemNames.length > 0 || godowns.length > 0) {
-            syncCache(orders, historyItems, itemNames, godowns);
-        }
-    }, [orders, historyItems, itemNames, godowns, syncCache]);
-
-    // When switching tabs, clear local selections and fetch history if needed (cache already used)
-    useEffect(() => {
-        setSelectedRows({});
-        setEditData({});
-        if (activeTab === 'history') {
-            fetchHistory();
-        }
-    }, [activeTab, fetchHistory]);
+        refreshAll();
+    }, [refreshAll]);
 
     // Memoized unique values for filters
     const allUniqueClients = useMemo(() =>
@@ -496,15 +305,11 @@ const DispatchComplete = () => {
             });
             const result = await response.json();
             if (result.success) {
-                // Force refresh after save
-                sessionStorage.removeItem(CACHE_KEY);
-                hasFetchedOrders.current = false;
-                hasFetchedHistory.current = false;
-                await fetchOrders(true);
-                await fetchHistory(true);
+                showToast('Dispatch status updated successfully!', 'success');
+                // Global refresh
+                await refreshAll(true);
                 setSelectedRows({});
                 setEditData({});
-                showToast('Dispatch status updated successfully!', 'success');
             } else {
                 showToast(`Error saving: ${result.error}`, 'error');
             }
@@ -513,18 +318,12 @@ const DispatchComplete = () => {
         } finally {
             setIsSaving(false);
         }
-    }, [selectedRows, orders, editData, fetchOrders, fetchHistory]);
+    }, [selectedRows, orders, editData, refreshAll]);
 
     // Manual refresh: clear cache and refetch
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        hasFetchedOrders.current = false;
-        hasFetchedHistory.current = false;
-        hasFetchedMaster.current = false;
-        fetchOrders(true);
-        fetchMasterData();
-        if (activeTab === 'history') fetchHistory(true);
-    }, [fetchOrders, fetchMasterData, fetchHistory, activeTab]);
+        refreshAll(true);
+    }, [refreshAll]);
 
     return (
         <div className="p-3 ">

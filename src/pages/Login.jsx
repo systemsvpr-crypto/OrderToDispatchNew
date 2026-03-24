@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, LogIn, User, Lock, Loader2, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useSheets } from '../contexts/SheetsContext';
 import Footer from '../components/Footer';
 import vprLogo from "../assets/vpr-logo.jpeg";
 
@@ -12,6 +13,7 @@ const Login = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
+  const { refreshAll } = useSheets();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -28,6 +30,8 @@ const Login = () => {
     try {
       const success = await login(username, password);
       if (success) {
+        // Pre-fetch all data so the first page is instant
+        await refreshAll(true);
         navigate('/admin/dashboard');
       } else {
         setError('Invalid User ID or password. Please check your credentials.');
