@@ -153,7 +153,8 @@ const DispatchPlanning = () => {
   }, [orders, dispatchHistory]);
   const allUniqueStockLocs = useMemo(() => {
     const locations = new Set();
-    (orders || []).forEach(order => {
+    const currentOrders = orders || [];
+    currentOrders.forEach(order => {
       if (order.currentStock) {
         order.currentStock.split(',').forEach(part => {
           const loc = part.split(':')[0].trim();
