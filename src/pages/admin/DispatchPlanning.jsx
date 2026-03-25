@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Save, History, ClipboardList, X, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
-import { useDataSync } from '../../utils/useDataSync';
+import { useSheets } from '../../contexts/SheetsContext';
 
 const GODOWNS = ['Godown 1', 'Godown 2', 'Main Store', 'North Warehouse'];
 
@@ -40,124 +40,100 @@ const formatDisplayDate = (dateStr) => {
 };
 
 const DispatchPlanning = () => {
-  const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState('pending');
-  const [selectedRows, setSelectedRows] = useState({});
-  const [editData, setEditData] = useState({});
-  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const { 
+        orders: rawOrders, 
+        planning: rawPlanning, 
+        isLoading, 
+        refreshAll 
+    } = useSheets();
 
-  const [searchTerm, setSearchTerm] = useState('');
-  const [clientFilter, setClientFilter] = useState('');
-  const [godownFilter, setGodownFilter] = useState('');
-  const [orderNoFilter, setOrderNoFilter] = useState('');
-  const [itemFilter, setItemFilter] = useState('');
-  const [dateFilter, setDateFilter] = useState('');
-  const [stockLocationFilter, setStockLocationFilter] = useState('');
+    const formatDisplayDate = (dateStr) => {
+        if (!dateStr || dateStr === '-') return '-';
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return dateStr;
+            const day = date.getDate().toString().padStart(2, '0');
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const month = months[date.getMonth()];
+            const year = date.getFullYear();
+            return `${day}-${month}-${year}`;
+        } catch { return dateStr; }
+    };
 
-  const [isSaving, setIsSaving] = useState(false);
+    const [activeTab, setActiveTab] = useState('pending');
+    const [selectedRows, setSelectedRows] = useState({});
+    const [editData, setEditData] = useState({});
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const { showToast } = useToast();
 
-  // --- Fetch function for pending orders (from ORDER sheet) ---
-  const fetchPendingOrders = useCallback(async (signal) => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'ORDER');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [clientFilter, setClientFilter] = useState('');
+    const [godownFilter, setGodownFilter] = useState('');
+    const [orderNoFilter, setOrderNoFilter] = useState('');
+    const [itemFilter, setItemFilter] = useState('');
+    const [dateFilter, setDateFilter] = useState('');
+    const [stockLocationFilter, setStockLocationFilter] = useState('');
 
-    const response = await fetch(url.toString(), { signal });
-    const result = await response.json();
+    // Derivative state: Pending Orders from global 'ORDER' data
+    const orders = useMemo(() => {
+        const mappedData = rawOrders.slice(5).map((item, index) => ({
+            ...item,
+            originalIndex: index,
+            orderNo: item.orderNumber,
+            qty: item.qty || 0
+        }));
 
-    if (!result.success) return [];
+        // Filter: Column Q is not null AND Column R is null AND Remaining Planning Qty > 0
+        return mappedData.filter(item => {
+            const hasQ = item.columnQ !== undefined && item.columnQ !== null && String(item.columnQ).trim() !== '';
+            const hasR = item.columnR !== undefined && item.columnR !== null && String(item.columnR).trim() !== '';
 
-    const data = result.data.slice(4); // skip header rows
-    return data
-      .map((item, index) => ({
-        ...item,
-        originalIndex: index,
-        orderNo: item.orderNumber,
-        qty: item.qty || 0,
-        planningPendingQty: getVal(item, 'planningPendingQty', 11) || 0
-      }))
-      .filter(item => {
-        const hasQ = item.columnQ !== undefined && item.columnQ !== null && String(item.columnQ).trim() !== '';
-        const hasR = item.columnR !== undefined && item.columnR !== null && String(item.columnR).trim() !== '';
-        const pendingQty = parseFloat(String(item.planningPendingQty).replace(/[^0-9.-]+/g, ''));
-        return hasQ && !hasR && !isNaN(pendingQty) && pendingQty > 0;
-      });
-  }, [API_URL, SHEET_ID]);
+            const pendingQty = parseFloat(String(getVal(item, 'planningPendingQty', 11) || '0').replace(/[^0-9.-]+/g, ''));
+            // Only show planned, un-finished items with positive pending quantity
+            return hasQ && !hasR && !isNaN(pendingQty) && pendingQty > 0;
+        });
+    }, [rawOrders]);
 
-  // --- Fetch function for planning history (from Planning sheet) ---
-  const fetchPlanningHistory = useCallback(async (signal) => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'Planning');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+    // Derivative state: History from global 'Planning' data
+    const dispatchHistory = useMemo(() => {
+        return rawPlanning.slice(3).map(item => ({
+            ...item,
+            orderNo: item.orderNumber || item.orderNo
+        }));
+    }, [rawPlanning]);
 
-    const response = await fetch(url.toString(), { signal });
-    const result = await response.json();
+    // Independent UI State Management - Clear selection/edit data on tab switch
+    useEffect(() => {
+        setSelectedRows({});
+        setEditData({});
+    }, [activeTab]);
 
-    if (!result.success) return [];
+    // Ensure data is loaded on mount
+    useEffect(() => {
+        refreshAll();
+    }, [refreshAll]);
 
-    const data = result.data.slice(3); // skip header rows
-    return data.map(item => ({
-      ...item,
-      orderNo: item.orderNumber || item.orderNo
-    }));
-  }, [API_URL, SHEET_ID]);
-
-  // --- Use data sync hooks ---
-  const { data: orders, loading: loadingOrders, refreshing: refreshingOrders, refresh: refreshOrders } = useDataSync(
-    'ORDER',
-    fetchPendingOrders,
-    'dispatchPlanningOrders',
-    10 * 60 * 1000
-  );
-  const { data: dispatchHistory, loading: loadingHistory, refreshing: refreshingHistory, refresh: refreshHistory } = useDataSync(
-    'Planning',
-    fetchPlanningHistory,
-    'dispatchPlanningHistory',
-    10 * 60 * 1000
-  );
-
-  const isLoading = loadingOrders || loadingHistory;     // first-load only
-  const isRefreshing = refreshingOrders || refreshingHistory; // manual refresh
-
-  // Clear selection/edit data on tab switch
-  useEffect(() => {
-    setSelectedRows({});
-    setEditData({});
-  }, [activeTab]);
-
-  // Get unique values for filters - Memoized
-  const allUniqueClients = useMemo(
-    () => [...new Set([...(orders || []).map(o => o.clientName), ...(dispatchHistory || []).map(h => h.clientName)])].sort(),
-    [orders, dispatchHistory]
-  );
-  const allUniqueGodowns = useMemo(
-    () => [...new Set([...(orders || []).map(o => o.godownName), ...(dispatchHistory || []).map(h => h.godownName)])].sort(),
-    [orders, dispatchHistory]
-  );
-  const allUniqueOrderNos = useMemo(
-    () => [...new Set([...(orders || []).map(o => o.orderNo), ...(dispatchHistory || []).map(h => h.orderNo)])].sort(),
-    [orders, dispatchHistory]
-  );
-  const allUniqueItems = useMemo(
-    () => [...new Set([...(orders || []).map(o => o.itemName), ...(dispatchHistory || []).map(h => h.itemName)])].sort(),
-    [orders, dispatchHistory]
-  );
-  const allUniqueDates = useMemo(() => {
-    const rawDates = [...new Set([
-      ...(orders || []).map(o => o.orderDate),
-      ...(dispatchHistory || []).map(h => h.orderDate)
-    ])].filter(Boolean).sort((a, b) => new Date(b) - new Date(a));
-    return rawDates.map(d => formatDisplayDate(d));
-  }, [orders, dispatchHistory]);
-  const allUniqueStockLocs = useMemo(() => {
-    const locations = new Set();
-    (orders || []).forEach(order => {
-      if (order.currentStock) {
-        order.currentStock.split(',').forEach(part => {
-          const loc = part.split(':')[0].trim();
-          if (loc) locations.add(loc);
+    // Get unique values for filters - Memoized
+    const allUniqueClients = useMemo(() => [...new Set([...orders.map(o => o.clientName), ...dispatchHistory.map(h => h.clientName)])].sort(), [orders, dispatchHistory]);
+    const allUniqueGodowns = useMemo(() => [...new Set([...orders.map(o => o.godownName), ...dispatchHistory.map(h => h.godownName)])].sort(), [orders, dispatchHistory]);
+    const allUniqueOrderNos = useMemo(() => [...new Set([...orders.map(o => o.orderNo), ...dispatchHistory.map(h => h.orderNo)])].sort(), [orders, dispatchHistory]);
+    const allUniqueItems = useMemo(() => [...new Set([...orders.map(o => o.itemName), ...dispatchHistory.map(h => h.itemName)])].sort(), [orders, dispatchHistory]);
+    const allUniqueDates = useMemo(() => {
+        const rawDates = [...new Set([
+            ...orders.map(o => o.orderDate),
+            ...dispatchHistory.map(h => h.orderDate)
+        ])].filter(Boolean).sort((a, b) => new Date(b) - new Date(a));
+        return rawDates.map(d => formatDisplayDate(d));
+    }, [orders, dispatchHistory]);
+    const allUniqueStockLocs = useMemo(() => {
+        const locations = new Set();
+        orders.forEach(order => {
+            if (order.currentStock) {
+                order.currentStock.split(',').forEach(part => {
+                    const loc = part.split(':')[0].trim();
+                    if (loc) locations.add(loc);
+                });
+            }
         });
       }
     });
@@ -289,26 +265,54 @@ const DispatchPlanning = () => {
 
     if (rowsToSubmit.length === 0) return;
 
-    setIsSaving(true);
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          sheetId: SHEET_ID,
-          sheet: "Planning",
-          rows: rowsToSubmit
-        })
-      });
+        if (rowsToSubmit.length === 0) return;
 
-      const result = await response.json();
-      if (result.success) {
-        showToast('Planning saved successfully!', 'success');
-        // Invalidate cache and refetch both data sources
-        sessionStorage.removeItem('dispatchPlanningOrders');
-        sessionStorage.removeItem('dispatchPlanningHistory');
-        await refreshOrders();
-        await refreshHistory();
+        setIsLoading(true);
+        try {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                    sheetId: import.meta.env.VITE_orderToDispatch_SHEET_ID,
+                    sheet: "Planning",
+                    rows: rowsToSubmit
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                showToast('Planning saved successfully!', 'success');
+                // Refresh global state
+                await refreshAll(true);
+                setSelectedRows({});
+                setEditData({});
+            } else {
+                showToast(`Error saving: ${result.error || 'Unknown error'}`, 'error');
+            }
+        } catch (error) {
+            console.error('Save failed:', error);
+            showToast(`Failed to save planning: ${error.message}`, 'error');
+        } finally {
+            setIsLoading(false);
+        }
+    }, [selectedRows, orders, editData, refreshAll]);
+
+    // Manual refresh: trigger global reload
+    const handleRefresh = useCallback(() => {
+        refreshAll(true);
+    }, [refreshAll]);
+
+    const clearFilters = useCallback(() => {
+        setSearchTerm('');
+        setClientFilter('');
+        setGodownFilter('');
+        setOrderNoFilter('');
+        setItemFilter('');
+        setDateFilter('');
+        setStockLocationFilter('');
+    }, []);
+
+    const handleCancelSelection = useCallback(() => {
         setSelectedRows({});
         setEditData({});
       } else {

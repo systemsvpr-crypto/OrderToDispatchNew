@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { X, Loader, Save, RefreshCcw, ChevronUp, ChevronDown } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
+import { useSheets } from '../../contexts/SheetsContext';
 
 const CACHE_KEY = 'pcReportData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const PcReport = () => {
-    const [items, setItems] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
+    const { pcReport: rawPcReport, isLoading, refreshAll } = useSheets();
     const [isSaving, setIsSaving] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [modalOpen, setModalOpen] = useState(false);
@@ -50,76 +50,31 @@ const PcReport = () => {
         } catch { return dateStr; }
     };
 
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { items, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_DURATION) return items;
-        } catch (e) { /* ignore */ }
-        return null;
-    }, []);
+    // --- Derive data from context ---
+    const items = useMemo(() => {
+        return rawPcReport.slice(1).map((item, idx) => ({
+            originalIndex: idx,
+            orderNumber: getVal(item, 'orderNumber', 'Unique Number', 'Order No') || '-',
+            plannedDate: getVal(item, 'plannedDate', 'Planned Date') || '-',
+            stepName: getVal(item, 'stepName', 'Step Name', 'Stage') || '-',
+            who: getVal(item, 'who', 'Who') || '-',
+            clientName: getVal(item, 'clientName', 'Client Name', 'Client') || '-',
+            godown: getVal(item, 'godown', 'Godown') || '-',
+            itemName: getVal(item, 'itemName', 'Item Name', 'Product') || '-',
+            orderQty: getVal(item, 'orderQty', 'Order Qty', 'Qty') || '0',
+            status: getVal(item, 'status', 'Status') || '-',
+            remarks: getVal(item, 'remarks', 'Remarks') || '-'
+        }));
+    }, [rawPcReport]);
 
-    const saveToCache = useCallback((itemsData) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ items: itemsData, timestamp: Date.now() }));
-    }, []);
-
-    // Stable Fetcher
-    const fetchData = useCallback(async () => {
-        try {
-            const response = await fetch(`${API_URL}?sheet=PC Report&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
-            const result = await response.json();
-            if (result.success && Array.isArray(result.data)) {
-                return result.data.map((item, idx) => ({
-                    originalIndex: idx,
-                    orderNumber: getVal(item, 'orderNumber', 'Unique Number', 'Order No') || '-',
-                    plannedDate: getVal(item, 'plannedDate', 'Planned Date') || '-',
-                    stepName: getVal(item, 'stepName', 'Step Name', 'Stage') || '-',
-                    who: getVal(item, 'who', 'Who') || '-',
-                    clientName: getVal(item, 'clientName', 'Client Name', 'Client') || '-',
-                    godown: getVal(item, 'godown', 'Godown') || '-',
-                    itemName: getVal(item, 'itemName', 'Item Name', 'Product') || '-',
-                    orderQty: getVal(item, 'orderQty', 'Order Qty', 'Qty') || '0',
-                    status: getVal(item, 'status', 'Status') || '-',
-                    remarks: getVal(item, 'remarks', 'Remarks') || '-'
-                }));
-            }
-            return [];
-        } catch (error) {
-            console.error('Error fetching data:', error);
-            return [];
-        }
-    }, [API_URL, SHEET_ID]);
-
-    const loadData = useCallback(async (force = false) => {
-        setIsLoading(true);
-        if (!force) {
-            const cached = loadFromCache();
-            if (cached) {
-                setItems(cached);
-                setIsLoading(false);
-                return;
-            }
-        }
-        const freshData = await fetchData();
-        setItems(freshData);
-        setIsLoading(false);
-    }, [fetchData, loadFromCache]);
-
-    // Initial load
-    useEffect(() => { loadData(); }, [loadData]);
-
-    // Automated Cache Sync
     useEffect(() => {
-        if (items.length > 0) saveToCache(items);
-    }, [items, saveToCache]);
+        refreshAll();
+    }, [refreshAll]);
 
     // Refresh Handler
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        loadData(true);
-    }, [loadData]);
+        refreshAll(true);
+    }, [refreshAll]);
 
     // Sorting logic
     const requestSort = useCallback((key) => {
@@ -207,7 +162,7 @@ const PcReport = () => {
 
             sessionStorage.removeItem(CACHE_KEY);
             showToast('Update submitted successfully.', 'success');
-            await loadData(true);
+            await refreshAll(true);
             setModalOpen(false);
         } catch (error) {
             console.error('Submit error:', error);
@@ -215,7 +170,7 @@ const PcReport = () => {
         } finally {
             setIsSaving(false);
         }
-    }, [currentItem, formData, API_URL, SHEET_ID, loadData]);
+    }, [currentItem, formData, API_URL, SHEET_ID, refreshAll]);
 
     return (
         <div className="">

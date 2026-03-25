@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { CheckCircle, History, Save, Loader, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
-import { useDataSync } from '../../utils/useDataSync';
+import { useSheets } from '../../contexts/SheetsContext';
 
 // --- Constants ---
 const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
@@ -58,448 +58,140 @@ const formatDateToYYYYMMDD = (dateVal) => {
 };
 
 const DispatchComplete = () => {
-  const { showToast } = useToast();
+    const { 
+        planning: rawPlanning, 
+        dispatchCompleted: rawHistory, 
+        itemNames: contextItemNames, 
+        godowns: contextGodowns, 
+        isLoading, 
+        refreshAll 
+    } = useSheets();
 
-  // --- UI state ---
-  const [activeTab, setActiveTab] = useState('pending');
-  const [selectedRows, setSelectedRows] = useState({});
-  const [editData, setEditData] = useState({});
-  const [searchTerm, setSearchTerm] = useState('');
-  const [clientFilter, setClientFilter] = useState('');
-  const [godownFilter, setGodownFilter] = useState('');
-  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
-  const [isSaving, setIsSaving] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [activeTab, setActiveTab] = useState('pending');
+    const [selectedRows, setSelectedRows] = useState({});
+    const [editData, setEditData] = useState({});
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const { showToast } = useToast();
 
-  // --- Master data (item names, godowns) ---
-  const [itemNames, setItemNames] = useState([]);
-  const [godowns, setGodowns] = useState([]);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [clientFilter, setClientFilter] = useState('');
+    const [godownFilter, setGodownFilter] = useState('');
 
-  // --- Fetch function for pending orders (Planning sheet) ---
-  const fetchPendingOrders = useCallback(async (signal) => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'Planning');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+    // Derive pending orders from context
+    const orders = useMemo(() => {
+        return rawPlanning.slice(3)
+            .map((item, idx) => ({
+                ...item,
+                dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No'),
+                dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date'),
+                orderNumber: getVal(item, 'orderNumber', 'orderNo', 'Order No'),
+                clientName: getVal(item, 'clientName', 'customer', 'Customer Name', 'Client Name'),
+                itemName: getVal(item, 'itemName', 'product', 'Product Name', 'Item Name'),
+                godownName: getVal(item, 'godownName', 'godown', 'Godown Name'),
+                qty: getVal(item, 'qty', 'orderQty', 'Order Qty'),
+                dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty'),
+                crmName: getVal(item, 'crmName', 'CRM Name'),
+                columnO: item.columnO || '',
+                columnP: item.columnP || '',
+                sheetRow: item.sheetRow || (idx + 4),
+                status: String(getVal(item, 'status', 'Status') || '').toLowerCase(),
+                originalIndex: idx
+            }))
+            .filter(item => {
+                const colOValue = String(item.columnO || '').trim();
+                const colPValue = String(item.columnP || '').trim();
+                const bothNotNull = colOValue !== '' && colOValue !== '-' && colPValue !== '' && colPValue !== '-';
+                return !bothNotNull;
+            });
+    }, [rawPlanning]);
 
-    const response = await fetch(url.toString(), { signal });
-    const text = await response.text();
-    let result;
-    try { result = JSON.parse(text); } catch (e) { return []; }
+    // Derive history from context
+    const historyItems = useMemo(() => {
+        // Handle mode=table data structure (if headers exist)
+        const hasHeaders = rawHistory.length > 0 && Array.isArray(rawHistory[0]) &&
+            (String(rawHistory[0][0]).toLowerCase().includes('planning') ||
+                String(rawHistory[0][1]).toLowerCase().includes('dispatch'));
 
-    let dataArray = [];
-    if (Array.isArray(result)) dataArray = result;
-    else if (result.success && Array.isArray(result.data)) dataArray = result.data;
-    else if (result.data && Array.isArray(result.data)) dataArray = result.data;
-    else if (result.rows && Array.isArray(result.rows)) dataArray = result.rows;
+        const processArray = hasHeaders ? rawHistory.slice(1) : rawHistory;
 
-    if (!dataArray.length) return [];
-
-    const hasHeaders = Array.isArray(dataArray[0]) &&
-      (String(dataArray[0][0]).toLowerCase().includes('dispatch') ||
-       String(dataArray[0][1]).toLowerCase().includes('no'));
-
-    const processArray = hasHeaders ? dataArray.slice(1) : dataArray;
-    return processArray.slice(3)
-      .map((item, idx) => {
-        if (Array.isArray(item)) {
-          return {
-            originalIndex: idx,
-            dispatchNo: item[0] || '-',
-            dispatchDate: item[1] || '-',
-            orderNumber: item[2] || '-',
-            clientName: item[3] || '-',
-            itemName: item[4] || '-',
-            godownName: item[5] || '-',
-            qty: item[6] || '0',
-            dispatchQty: item[7] || '0',
-            crmName: item[8] || '-',
-            columnO: item[14] || '',
-            columnP: item[15] || '',
-            sheetRow: item[9] || (idx + (hasHeaders ? 2 : 1)),
-            status: getVal(item, 'status', 'Status', 17) || ''
-          };
-        } else {
-          return {
+        return processArray.map((item, idx) => ({
             ...item,
-            originalIndex: idx,
             dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No'),
             dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date'),
-            orderNumber: getVal(item, 'orderNumber', 'orderNo', 'Order No'),
-            clientName: getVal(item, 'clientName', 'customer', 'Customer Name', 'Client Name'),
-            itemName: getVal(item, 'itemName', 'product', 'Product Name', 'Item Name'),
-            godownName: getVal(item, 'godownName', 'godown', 'Godown Name'),
-            qty: getVal(item, 'qty', 'orderQty', 'Order Qty'),
+            completeDate: getVal(item, 'completeDate', 'Complete Date', 'Date'),
+            customer: getVal(item, 'customer', 'Customer', 'Customer Name'),
+            product: getVal(item, 'product', 'Product', 'Product Name'),
+            godown: getVal(item, 'godown', 'Godown Name', 'Godown'),
+            orderQty: getVal(item, 'orderQty', 'Order Qty'),
             dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty'),
+            status: getVal(item, 'status', 'Status'),
             crmName: getVal(item, 'crmName', 'CRM Name'),
-            columnO: getVal(item, 'columnO', 'O'),
-            columnP: getVal(item, 'columnP', 'P'),
-            status: String(getVal(item, 'status', 'Status') || '').toLowerCase(),
-            sheetRow: getVal(item, 'sheetRow', 'row')
-          };
-        }
-      })
-      .filter(item => {
-        const colOValue = String(item.columnO || '').trim();
-        const colPValue = String(item.columnP || '').trim();
-        const bothNotNull = colOValue !== '' && colOValue !== '-' && colPValue !== '' && colPValue !== '-';
-        return !bothNotNull;
-      });
-  }, [API_URL, SHEET_ID]);
-
-  // --- Fetch history from Dispatch Completed sheet ---
-  const fetchHistory = useCallback(async (signal) => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'Dispatch%20Completed');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
-
-    const response = await fetch(url.toString(), { signal });
-    const text = await response.text();
-    let result;
-    try { result = JSON.parse(text); } catch (e) { return []; }
-
-    let dataArray = [];
-    if (Array.isArray(result)) dataArray = result;
-    else if (result.success && Array.isArray(result.data)) dataArray = result.data;
-    else if (result.data && Array.isArray(result.data)) dataArray = result.data;
-    else if (result.rows && Array.isArray(result.rows)) dataArray = result.rows;
-
-    if (!dataArray.length) return [];
-
-    const hasHeaders = Array.isArray(dataArray[0]) &&
-      (String(dataArray[0][0]).toLowerCase().includes('planning') ||
-       String(dataArray[0][1]).toLowerCase().includes('dispatch'));
-
-    const processArray = hasHeaders ? dataArray.slice(1) : dataArray;
-    return processArray.map((item, idx) => {
-      if (Array.isArray(item)) {
-        return {
-          originalIndex: idx,
-          dispatchNo: item[1] || '-',
-          dispatchDate: item[2] || '-',
-          completeDate: item[3] || '-',
-          customer: item[4] || '-',
-          product: item[5] || '-',
-          godown: item[6] || '-',
-          orderQty: item[7] || '0',
-          dispatchQty: item[8] || '0',
-          status: item[9] || 'approved',
-          crmName: item[10] || '-'
-        };
-      } else {
-        return {
-          ...item,
-          originalIndex: idx,
-          dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No'),
-          dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date'),
-          completeDate: getVal(item, 'completeDate', 'Complete Date', 'Date'),
-          customer: getVal(item, 'customer', 'Customer', 'Customer Name'),
-          product: getVal(item, 'product', 'Product', 'Product Name'),
-          godown: getVal(item, 'godown', 'Godown Name', 'Godown'),
-          orderQty: getVal(item, 'orderQty', 'Order Qty'),
-          dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty'),
-          status: getVal(item, 'status', 'Status'),
-          crmName: getVal(item, 'crmName', 'CRM Name')
-        };
-      }
-    });
-  }, [API_URL, SHEET_ID]);
-
-  // --- Use data sync hooks ---
-  const { data: orders, loading: loadingOrders, refreshing: refreshingOrders, refresh: refreshOrders } = useDataSync(
-    'Planning',
-    fetchPendingOrders,
-    CACHE_KEY_PENDING,
-    10 * 60 * 1000
-  );
-  const { data: historyItems, loading: loadingHistory, refreshing: refreshingHistory, refresh: refreshHistory } = useDataSync(
-    'Dispatch Completed',
-    fetchHistory,
-    CACHE_KEY_HISTORY,
-    10 * 60 * 1000
-  );
-
-  const isLoading = loadingOrders || loadingHistory;     // first-load only
-  const isRefreshing = refreshingOrders || refreshingHistory; // manual refresh
-
-  // --- Fetch master data (item names, godowns) ---
-  const fetchMasterData = useCallback(async () => {
-    if (!MASTER_URL) return;
-    try {
-      const [productsRes, godownsRes] = await Promise.all([
-        fetch(`${MASTER_URL}?sheet=Products`),
-        fetch(`${MASTER_URL}?sheet=Products&col=4`)
-      ]);
-
-      const productsResult = await productsRes.json();
-      let newItems = [];
-      if (productsResult.success && productsResult.data) {
-        newItems = productsResult.data
-          .slice(1)
-          .map(row => Array.isArray(row) ? row[0] : row)
-          .filter(val => val && String(val).trim() !== "");
-        newItems = [...new Set(newItems)].sort();
-      }
-
-      const godownsResult = await godownsRes.json();
-      let newGodowns = [];
-      if (godownsResult.success && godownsResult.data) {
-        newGodowns = godownsResult.data
-          .flat()
-          .map(val => String(val).trim())
-          .filter(val => val && val.toLowerCase() !== "godown");
-        newGodowns = [...new Set(newGodowns)].sort();
-      }
-
-      setItemNames(newItems);
-      setGodowns(newGodowns);
-    } catch (error) {
-      console.error('Error fetching master data:', error);
-    }
-  }, [MASTER_URL]);
-
-  // Initial load of master data (no cache for now)
-  useEffect(() => {
-    fetchMasterData();
-  }, [fetchMasterData]);
-
-  // Clear selection/edit data when tab changes
-  useEffect(() => {
-    setSelectedRows({});
-    setEditData({});
-  }, [activeTab]);
-
-  // --- Memoized unique values for filters ---
-  const allUniqueClients = useMemo(() =>
-    [...new Set([...(orders || []).map(o => o.clientName), ...(historyItems || []).map(h => h.customer)])].sort(),
-    [orders, historyItems]
-  );
-  const allUniqueGodowns = useMemo(() =>
-    [...new Set([...(orders || []).map(o => o.godownName), ...(historyItems || []).map(h => h.godown)])].sort(),
-    [orders, historyItems]
-  );
-
-  // --- Sorting logic ---
-  const requestSort = useCallback((key) => {
-    setSortConfig(prev => ({
-      key,
-      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
-    }));
-  }, []);
-
-  const getSortedItems = useCallback((itemsToSort) => {
-    if (!sortConfig.key) return itemsToSort;
-    return [...itemsToSort].sort((a, b) => {
-      let aVal = a[sortConfig.key];
-      let bVal = b[sortConfig.key];
-
-      const aNum = parseFloat(String(aVal).replace(/[^0-9.-]+/g, ''));
-      const bNum = parseFloat(String(bVal).replace(/[^0-9.-]+/g, ''));
-      if (!isNaN(aNum) && !isNaN(bNum)) {
-        return sortConfig.direction === 'asc' ? aNum - bNum : bNum - aNum;
-      }
-
-      if (sortConfig.key.toLowerCase().includes('date')) {
-        const aDate = new Date(aVal);
-        const bDate = new Date(bVal);
-        if (!isNaN(aDate) && !isNaN(bDate)) {
-          return sortConfig.direction === 'asc' ? aDate - bDate : bDate - aDate;
-        }
-      }
-
-      aVal = String(aVal || '').toLowerCase();
-      bVal = String(bVal || '').toLowerCase();
-      if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
-      return 0;
-    });
-  }, [sortConfig]);
-
-  const filteredAndSortedPending = useMemo(() =>
-    getSortedItems(
-      (orders || []).filter(item => {
-        const matchesSearch = Object.values(item).some(val =>
-          String(val).toLowerCase().includes(searchTerm.toLowerCase())
-        );
-        const matchesClient = clientFilter === '' || item.clientName === clientFilter;
-        const matchesGodown = godownFilter === '' || item.godownName === godownFilter;
-        return matchesSearch && matchesClient && matchesGodown;
-      })
-    ),
-    [orders, searchTerm, clientFilter, godownFilter, getSortedItems]
-  );
-
-  const filteredAndSortedHistory = useMemo(() =>
-    getSortedItems(
-      (historyItems || []).filter(item => {
-        const matchesSearch = Object.values(item).some(val =>
-          String(val).toLowerCase().includes(searchTerm.toLowerCase())
-        );
-        const matchesClient = clientFilter === '' || item.customer === clientFilter;
-        const matchesGodown = godownFilter === '' || item.godown === godownFilter;
-        return matchesSearch && matchesClient && matchesGodown;
-      })
-    ),
-    [historyItems, searchTerm, clientFilter, godownFilter, getSortedItems]
-  );
-
-  // --- Actions ---
-  const handleCheckboxToggle = useCallback((realIdx, item) => {
-    setSelectedRows(prev => {
-      const isSelected = !prev[realIdx];
-      const next = { ...prev, [realIdx]: isSelected };
-      if (isSelected) {
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-        setEditData(prevEdit => ({
-          ...prevEdit,
-          [realIdx]: {
-            product: item.itemName,
-            godown: item.godownName,
-            dispatchQty: item.dispatchQty,
-            completeDate: yesterdayStr,
-            status: 'Completed'
-          }
+            originalIndex: idx
         }));
-      } else {
-        setEditData(prevEdit => {
-          const newEditData = { ...prevEdit };
-          delete newEditData[realIdx];
-          return newEditData;
+    }, [rawHistory]);
+
+    // Master data from context
+    const itemNames = useMemo(() => {
+        const flatItems = contextItemNames.flat().map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== 'product' && v.toLowerCase() !== 'item name');
+        return [...new Set(flatItems)].sort();
+    }, [contextItemNames]);
+
+    const godowns = useMemo(() => {
+        const flatGodowns = contextGodowns.flat().map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== 'godown');
+        return [...new Set(flatGodowns)].sort();
+    }, [contextGodowns]);
+
+    useEffect(() => {
+        refreshAll();
+    }, [refreshAll]);
+
+    // Memoized unique values for filters
+    const allUniqueClients = useMemo(() =>
+        [...new Set([...orders.map(o => o.clientName), ...historyItems.map(h => h.customer)])].sort(),
+        [orders, historyItems]
+    );
+    const allUniqueGodowns = useMemo(() =>
+        [...new Set([...orders.map(o => o.godownName), ...historyItems.map(h => h.godown)])].sort(),
+        [orders, historyItems]
+    );
+
+    // Memoized sorting logic
+    const requestSort = useCallback((key) => {
+        setSortConfig(prev => ({
+            key,
+            direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+        }));
+    }, []);
+
+    const getSortedItems = useCallback((itemsToSort) => {
+        if (!sortConfig.key) return itemsToSort;
+
+        return [...itemsToSort].sort((a, b) => {
+            let aVal = a[sortConfig.key];
+            let bVal = b[sortConfig.key];
+
+            const aNum = parseFloat(String(aVal).replace(/[^0-9.-]+/g, ''));
+            const bNum = parseFloat(String(bVal).replace(/[^0-9.-]+/g, ''));
+            if (!isNaN(aNum) && !isNaN(bNum)) {
+                return sortConfig.direction === 'asc' ? aNum - bNum : bNum - aNum;
+            }
+
+            if (sortConfig.key.toLowerCase().includes('date')) {
+                const aDate = new Date(aVal);
+                const bDate = new Date(bVal);
+                if (!isNaN(aDate) && !isNaN(bDate)) {
+                    return sortConfig.direction === 'asc' ? aDate - bDate : bDate - aDate;
+                }
+            }
+
+            aVal = String(aVal || '').toLowerCase();
+            bVal = String(bVal || '').toLowerCase();
+            if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
         });
-      }
-      return next;
-    });
-  }, []);
-
-  const handleEditChange = useCallback((idx, field, value) => {
-    setEditData(prev => ({
-      ...prev,
-      [idx]: { ...prev[idx], [field]: value }
-    }));
-  }, []);
-
-  const handleSave = useCallback(async () => {
-    const rowsToSubmit = [];
-    const indicesToRemove = [];
-
-    Object.keys(selectedRows).forEach(idxStr => {
-      const idx = parseInt(idxStr);
-      if (selectedRows[idx]) {
-        const originalItem = (orders || []).find(o => o.originalIndex === idx);
-        if (!originalItem) return;
-        const edit = editData[idx] || {};
-        rowsToSubmit.push({
-          planningRowNumber: originalItem.sheetRow,
-          dispatchNo: originalItem.dispatchNo,
-          dispatchDate: formatDateToYYYYMMDD(originalItem.dispatchDate),
-          completeDate: formatDateToYYYYMMDD(edit.completeDate || (() => {
-            const d = new Date();
-            d.setDate(d.getDate() - 1);
-            return d;
-          })()),
-          customer: originalItem.clientName,
-          product: edit.product || originalItem.itemName,
-          godown: edit.godown || originalItem.godownName,
-          orderQty: originalItem.qty,
-          dispatchQty: edit.dispatchQty || originalItem.dispatchQty,
-          status: edit.status || 'Completed',
-          crmName: originalItem.crmName
-        });
-        indicesToRemove.push(idx);
-      }
-    });
-
-    if (rowsToSubmit.length === 0) return;
-
-    setIsSaving(true);
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          sheet: 'Dispatch Completed',
-          rows: rowsToSubmit,
-          sheetId: SHEET_ID
-        })
-      });
-      const result = await response.json();
-      if (result.success) {
-        // Invalidate caches and refresh both data sources
-        sessionStorage.removeItem(CACHE_KEY_PENDING);
-        sessionStorage.removeItem(CACHE_KEY_HISTORY);
-        await refreshOrders();
-        await refreshHistory();
-        setSelectedRows({});
-        setEditData({});
-        showToast('Dispatch status updated successfully!', 'success');
-      } else {
-        showToast(`Error saving: ${result.error}`, 'error');
-      }
-    } catch (error) {
-      showToast(`Network error: ${error.message}`, 'error');
-    } finally {
-      setIsSaving(false);
-    }
-  }, [selectedRows, orders, editData, refreshOrders, refreshHistory, showToast, API_URL, SHEET_ID]);
-
-  // Manual refresh: clear caches and force refetch
-  const handleRefresh = useCallback(() => {
-    sessionStorage.removeItem(CACHE_KEY_PENDING);
-    sessionStorage.removeItem(CACHE_KEY_HISTORY);
-    refreshOrders();
-    refreshHistory();
-    fetchMasterData(); // also refresh master data
-  }, [refreshOrders, refreshHistory, fetchMasterData]);
-
-  return (
-    <div className="">
-      {/* Header Card */}
-      <div className="flex flex-col gap-4 mb-6 bg-white p-4 lg:p-5 rounded-xl shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <h1 className="text-xl font-bold text-gray-800">Dispatch Completed</h1>
-            <div className="flex bg-gray-100 p-1 rounded">
-              <button
-                onClick={() => setActiveTab('pending')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'pending' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                <CheckCircle size={16} />
-                Pending
-              </button>
-              <button
-                onClick={() => setActiveTab('history')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                <History size={16} />
-                History
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleRefresh}
-              disabled={isRefreshing || isSaving}
-              className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
-            >
-              <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
-              Refresh
-            </button>
-
-            {activeTab === 'pending' && Object.values(selectedRows).some(v => v) && (
-              <button
-                onClick={handleSave}
-                disabled={isSaving}
-                className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded hover:bg-primary-hover shadow-md font-bold text-xs disabled:opacity-50"
-              >
-                {isSaving ? <Loader size={16} className="animate-spin" /> : <Save size={16} />}
-                {isSaving ? 'Saving...' : 'Save Completion'}
-              </button>
-            )}
-          </div>
-        </div>
+    }, [sortConfig]);
 
         {/* Filters */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -745,29 +437,63 @@ const DispatchComplete = () => {
           <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-gray-100 to-transparent pointer-events-none opacity-30"></div>
         </div>
 
-        {/* Mobile Card View */}
-        <div className="md:hidden divide-y divide-gray-200">
-          {(activeTab === 'pending' ? filteredAndSortedPending : filteredAndSortedHistory).map((item) => {
-            const realIdx = item.originalIndex;
-            const isSelected = activeTab === 'pending' && !!selectedRows[realIdx];
-            return (
-              <div
-                key={activeTab === 'pending' ? `mp-${item.dispatchNo}-${realIdx}` : `mh-${item.dispatchNo}-${realIdx}`}
-                className={`p-4 space-y-4 transition-colors ${isSelected ? 'bg-green-50/50' : 'bg-white'}`}
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-[10px] font-bold text-primary uppercase mb-0.5">Dispatch No</p>
-                    <p className="font-bold text-gray-900 text-sm">{item.dispatchNo}</p>
-                  </div>
-                  {activeTab === 'pending' && (
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => handleCheckboxToggle(realIdx, item)}
-                      className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer mt-1"
-                    />
-                  )}
+        if (rowsToSubmit.length === 0) return;
+
+        setIsSaving(true);
+        try {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                    sheet: 'Dispatch Completed',
+                    rows: rowsToSubmit,
+                    sheetId: import.meta.env.VITE_orderToDispatch_SHEET_ID
+                }),
+                redirect: 'follow'
+            });
+            const result = await response.json();
+            if (result.success) {
+                showToast('Dispatch status updated successfully!', 'success');
+                // Global refresh
+                await refreshAll(true);
+                setSelectedRows({});
+                setEditData({});
+            } else {
+                showToast(`Error saving: ${result.error}`, 'error');
+            }
+        } catch (error) {
+            showToast(`Network error: ${error.message}`, 'error');
+        } finally {
+            setIsSaving(false);
+        }
+    }, [selectedRows, orders, editData, refreshAll]);
+
+    // Manual refresh: clear cache and refetch
+    const handleRefresh = useCallback(() => {
+        refreshAll(true);
+    }, [refreshAll]);
+
+    return (
+        <div className="p-3 ">
+            {/* Header Row with Title, Tabs, Filters, and Actions */}
+            <div className="flex flex-wrap items-center gap-4 mb-6 bg-white p-5 rounded-xl shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
+                <h1 className="text-xl font-bold text-gray-800">Dispatch Completed</h1>
+
+                <div className="flex bg-gray-100 p-1 rounded">
+                    <button
+                        onClick={() => setActiveTab('pending')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'pending' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <CheckCircle size={16} />
+                        Pending
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('history')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <History size={16} />
+                        History
+                    </button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-sm">

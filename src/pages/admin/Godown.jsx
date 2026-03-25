@@ -1,85 +1,72 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Loader, X, Filter, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
-import { useDataSync } from '../../utils/useDataSync';
+import { useSheets } from '../../contexts/SheetsContext';
+
+// Helper to get value from object regardless of key casing/spaces
+const getVal = (obj, ...possibleKeys) => {
+    if (!obj) return undefined;
+    const keys = Object.keys(obj);
+    for (const pKey of possibleKeys) {
+        if (obj[pKey] !== undefined) return obj[pKey];
+        if (typeof pKey !== 'string') continue;
+        const normalizedPKey = pKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const foundKey = keys.find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedPKey);
+        if (foundKey) return obj[foundKey];
+    }
+    return undefined;
+};
+
+// Professional Date Formatter (e.g., 25-Feb-2026)
+const formatDisplayDate = (dateStr) => {
+    if (!dateStr || dateStr === '-') return '-';
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        const day = date.getDate().toString().padStart(2, '0');
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const month = months[date.getMonth()];
+        const year = date.getFullYear();
+        return `${day}-${month}-${year}`;
+    } catch (e) {
+        return dateStr;
+    }
+};
 
 const CACHE_KEY = 'godownData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const Godown = () => {
-    const [items, setItems] = useState([]);
+    const { planning: rawPlanning, isLoading, refreshAll } = useSheets();
     const [searchTerm, setSearchTerm] = useState('');
     const [godownFilter, setGodownFilter] = useState('All');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
 
     const godownTabs = ['All', 'darba', 'DP', 'dusera', 'godown'];
 
-    const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-    const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
+    // --- Derive data from context ---
+    const items = useMemo(() => {
+        return rawPlanning.slice(3).map(item => ({
+            originalIndex: item.originalIndex,
+            dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No') || '-',
+            dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date') || '-',
+            orderNo: getVal(item, 'orderNumber', 'Order No', 'Order Number') || '-',
+            customerName: getVal(item, 'clientName', 'Customer', 'Customer Name') || '-',
+            productName: getVal(item, 'itemName', 'Product', 'Product Name') || '-',
+            orderQty: getVal(item, 'qty', 'Order Qty') || '0',
+            dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty') || '0',
+            godown: getVal(item, 'godownName', 'Godown') || '-',
+            gstIncluded: getVal(item, 'gstIncluded', 'GST Included') || '-'
+        }));
+    }, [rawPlanning]);
 
-    // Helper to get value from object regardless of key casing/spaces
-    const getVal = (obj, ...possibleKeys) => {
-        if (!obj) return undefined;
-        const keys = Object.keys(obj);
-        for (const pKey of possibleKeys) {
-            if (obj[pKey] !== undefined) return obj[pKey];
-            const normalizedPKey = pKey.toLowerCase().replace(/[^a-z0-9]/g, '');
-            const foundKey = keys.find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedPKey);
-            if (foundKey) return obj[foundKey];
-        }
-        return undefined;
-    };
-
-    const formatDisplayDate = (dateStr) => {
-        if (!dateStr || dateStr === '-') return '-';
-        try {
-            const date = new Date(dateStr);
-            if (isNaN(date.getTime())) return dateStr;
-            const day = date.getDate().toString().padStart(2, '0');
-            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            const month = months[date.getMonth()];
-            const year = date.getFullYear();
-            return `${day}-${month}-${year}`;
-        } catch { return dateStr; }
-    };
-
-    // Fetch Planning data - Stable Fetcher for Hook
-    const fetchPlanning = useCallback(async () => {
-        const response = await fetch(`${API_URL}?sheet=Planning&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
-        const result = await response.json();
-        if (result.success && Array.isArray(result.data)) {
-            return result.data.slice(3).map(item => ({
-                originalIndex: item.originalIndex,
-                dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No') || '-',
-                dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date') || '-',
-                orderNo: getVal(item, 'orderNumber', 'Order No', 'Order Number') || '-',
-                customerName: getVal(item, 'clientName', 'Customer', 'Customer Name') || '-',
-                productName: getVal(item, 'itemName', 'Product', 'Product Name') || '-',
-                orderQty: getVal(item, 'qty', 'Order Qty') || '0',
-                dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty') || '0',
-                godown: getVal(item, 'godownName', 'Godown') || '-',
-                gstIncluded: getVal(item, 'gstIncluded', 'GST Included') || '-'
-            }));
-        }
-        return [];
-    }, [API_URL, SHEET_ID]);
-
-    // --- Data Sync Hook ---
-    const { 
-        data: syncData, 
-        loading, 
-        refreshing, 
-        refresh 
-    } = useDataSync('Godown Management Sync', fetchPlanning, 'godownCache', CACHE_DURATION);
-
-    // Sync hook data to local state
     useEffect(() => {
-        if (syncData) setItems(syncData);
-    }, [syncData]);
+        refreshAll();
+    }, [refreshAll]);
 
     // Manual Refresh
     const handleRefresh = useCallback(() => {
-        refresh();
-    }, [refresh]);
+        refreshAll(true);
+    }, [refreshAll]);
 
     // Sorting logic
     const requestSort = (key) => {

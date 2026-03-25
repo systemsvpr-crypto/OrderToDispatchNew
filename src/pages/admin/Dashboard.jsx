@@ -30,6 +30,7 @@ import {
 import { Line } from 'react-chartjs-2';
 import { useDataSync } from '../../utils/useDataSync';
 import { useToast } from '../../contexts/ToastContext';
+import { useSheets } from '../../contexts/SheetsContext';
 
 ChartJS.register(
   CategoryScale,
@@ -63,90 +64,54 @@ const getVal = (obj, ...possibleKeys) => {
 
 const Dashboard = () => {
   const { showToast } = useToast();
-  const [stats, setStats] = useState({
-    orderQtySum: 0,
-    cancelQtySum: 0,
-    remainingQtySum: 0,
-    deliveredQtySum: 0,
-    pendingPlanning: 0,
-    completedPlanning: 0,
-    pendingNotification: 0,
-    completedNotification: 0,
-    pendingCompletion: 0,
-    completedCompletion: 0,
-    pendingPostNotify: 0,
-    fullyCompleted: 0
-  });
+  const { 
+    orders: rawOrders, 
+    planning: rawPlanning, 
+    isLoading: loading, 
+    refreshAll 
+  } = useSheets();
 
-  // New state for timeline chart (Monthly trends)
-  const [allMonthlyMap, setAllMonthlyMap] = useState({ months: [], clientData: new Map() });
-  // New state for godown load (from Planning sheet)
-  const [godownLoad, setGodownLoad] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // --- Fetcher for ORDER sheet ---
-  const fetchOrderSheet = useCallback(async () => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'ORDER');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
-    
-    const res = await fetch(url.toString());
-    const result = await res.json();
-    if (result.success && Array.isArray(result.data)) return result.data.slice(5);
-    throw new Error('Failed to fetch ORDER data');
-  }, []);
+  const safeNumber = (val) => {
+    const num = parseFloat(val);
+    return isNaN(num) ? 0 : num;
+  };
 
-  // --- Fetcher for Planning sheet ---
-  const fetchPlanningSheet = useCallback(async () => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'Planning');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
-    
-    const res = await fetch(url.toString());
-    const result = await res.json();
-    if (result.success && Array.isArray(result.data)) return result.data.slice(3);
-    throw new Error('Failed to fetch Planning data');
-  }, []);
+  const countStage = (items, pendingCol, completedCols) => {
+    let pending = 0;
+    let completed = 0;
+    const compCols = Array.isArray(completedCols) ? completedCols : [completedCols];
 
-  // --- Data Sync Hooks ---
-  const { 
-    data: orderData, 
-    loading: loadingOrders, 
-    refreshing: refreshingOrders, 
-    refresh: refreshOrders 
-  } = useDataSync('Dashboard Orders', fetchOrderSheet, 'dashboardOrders', CACHE_DURATION);
+    items.forEach(item => {
+      const isCompleted = compCols.every(col => (item[col] || '').toString().trim() !== '');
 
-  const { 
-    data: planningData, 
-    loading: loadingPlanning, 
-    refreshing: refreshingPlanning, 
-    refresh: refreshPlanning 
-  } = useDataSync('Dashboard Planning', fetchPlanningSheet, 'dashboardPlanning', CACHE_DURATION);
+      if (isCompleted) {
+        completed++;
+      } else {
+        pending++;
+      }
+    });
+    return { pending, completed };
+  };
 
-  const loading = loadingOrders || loadingPlanning;
-  const refreshing = refreshingOrders || refreshingPlanning;
-
-  // Derive stats when data changes
-  useEffect(() => {
-    if (!orderData) return;
-
-    // Sums for cards
-    const orderQtySum = orderData.reduce((sum, item) => sum + safeNumber(getVal(item, 'planningQty', 10)), 0);
-    const cancelQtySum = orderData.reduce((sum, item) => sum + safeNumber(item.cancelQty), 0);
-    const remainingQtySum = orderData.reduce((sum, item) => {
+  // Computed Data from Context
+  const computedData = useMemo(() => {
+    // 1. Process ORDER sheet data
+    const orders = rawOrders.slice(5);
+    const orderQtySum = orders.reduce((sum, item) => sum + safeNumber(getVal(item, 'planningQty', 10)), 0);
+    const cancelQtySum = orders.reduce((sum, item) => sum + safeNumber(item.cancelQty), 0);
+    const remainingQtySum = orders.reduce((sum, item) => {
       const val = safeNumber(getVal(item, 'planningPendingQty', 11));
       return sum + (val > 0 ? val : 0);
     }, 0);
-    const deliveredQtySum = orderData.reduce((sum, item) => sum + safeNumber(item.qtyDelivered), 0);
+    const deliveredQtySum = orders.reduce((sum, item) => sum + safeNumber(item.qtyDelivered), 0);
 
-    // Stage 1 counts (columns Q & R)
-    const stage1 = countStage(orderData, 'columnQ', 'columnR');
+    const stage1 = countStage(orders, 'columnQ', 'columnR');
 
     // Build monthly trends
     const monthlyMap = new Map();
-    orderData.forEach(order => {
+    orders.forEach(order => {
       if (order.orderDate && order.orderDate !== "-") {
         const date = new Date(order.orderDate);
         if (!isNaN(date.getTime())) {
@@ -183,7 +148,6 @@ const Dashboard = () => {
       }
     });
 
-    // Sorted months
     const rawMonths = Array.from(monthlyMap.keys()).sort();
     let sortedMonths = [];
     if (rawMonths.length > 0) {
@@ -201,38 +165,14 @@ const Dashboard = () => {
       }
     }
 
-    setAllMonthlyMap({ months: sortedMonths, clientData: monthlyMap });
-    setStats(prev => ({
-      ...prev,
-      orderQtySum,
-      cancelQtySum,
-      remainingQtySum,
-      deliveredQtySum,
-      pendingPlanning: stage1.pending,
-      completedPlanning: stage1.completed
-    }));
-  }, [orderData]);
-
-  // Derive planning stats
-  useEffect(() => {
-    if (!planningData) return;
-
-    const stage2 = countStage(planningData, 'columnK', 'columnL');
-    const stage3 = countStage(planningData, 'columnO', ['columnO', 'columnP']);
-    const stage4 = countStage(planningData, 'columnT', ['columnT', 'columnU']);
-
-    setStats(prev => ({
-      ...prev,
-      pendingNotification: stage2.pending,
-      completedNotification: stage2.completed,
-      pendingCompletion: stage3.pending,
-      completedCompletion: stage3.completed,
-      pendingPostNotify: stage4.pending,
-      fullyCompleted: stage4.completed
-    }));
+    // 2. Process Planning sheet data
+    const planningRows = rawPlanning.slice(3);
+    const stage2 = countStage(planningRows, 'columnK', 'columnL');
+    const stage3 = countStage(planningRows, 'columnO', ['columnO', 'columnP']);
+    const stage4 = countStage(planningRows, 'columnT', ['columnT', 'columnU']);
 
     const godownMap = new Map();
-    planningData.forEach(item => {
+    planningRows.forEach(item => {
       const godown = item.godownName || 'Unassigned';
       const qty = safeNumber(item.dispatchQty);
       if (qty > 0) {
@@ -243,50 +183,35 @@ const Dashboard = () => {
     const godownArray = Array.from(godownMap.entries())
       .map(([godown, total]) => ({ godown, total }))
       .sort((a, b) => b.total - a.total);
-    setGodownLoad(godownArray);
-  }, [planningData]);
 
-  const safeNumber = (val) => {
-    const num = parseFloat(val);
-    return isNaN(num) ? 0 : num;
-  };
+    return {
+      stats: {
+        orderQtySum,
+        cancelQtySum,
+        remainingQtySum,
+        deliveredQtySum,
+        pendingPlanning: stage1.pending,
+        completedPlanning: stage1.completed,
+        pendingNotification: stage2.pending,
+        completedNotification: stage2.completed,
+        pendingCompletion: stage3.pending,
+        completedCompletion: stage3.completed,
+        pendingPostNotify: stage4.pending,
+        fullyCompleted: stage4.completed
+      },
+      allMonthlyMap: {
+        months: sortedMonths,
+        clientData: monthlyMap
+      },
+      godownLoad: godownArray
+    };
+  }, [rawOrders, rawPlanning]);
 
-  const countStage = (items, pendingCol, completedCols) => {
-    let pending = 0;
-    let completed = 0;
-    const compCols = Array.isArray(completedCols) ? completedCols : [completedCols];
-
-    items.forEach(item => {
-      const isCompleted = compCols.every(col => (item[col] || '').toString().trim() !== '');
-
-      if (isCompleted) {
-        completed++;
-      } else {
-        pending++;
-      }
-    });
-    return { pending, completed };
-  };
-
-  // Helper to extract date part (YYYY-MM-DD) from various date formats
-  const extractDateKey = (dateStr) => {
-    if (!dateStr || dateStr === '-') return null;
-    try {
-      const date = new Date(dateStr);
-      if (isNaN(date.getTime())) return null;
-      const yyyy = date.getFullYear();
-      const mm = String(date.getMonth() + 1).padStart(2, '0');
-      const dd = String(date.getDate()).padStart(2, '0');
-      return `${yyyy}-${mm}-${dd}`;
-    } catch {
-      return null;
-    }
-  };
+  const { stats, allMonthlyMap, godownLoad } = computedData;
 
   const handleRefresh = useCallback(() => {
-    refreshOrders();
-    refreshPlanning();
-  }, [refreshOrders, refreshPlanning]);
+    refreshAll(true);
+  }, [refreshAll]);
 
   // Reactive Chart Data Construction – Handles 1000s of clients professionally
   const monthlyTrendData = React.useMemo(() => {
@@ -414,7 +339,7 @@ const Dashboard = () => {
   const WorkflowStageCard = ({ title, pending, completed, icon: Icon, color, bgColor, stage }) => {
     const total = completed + pending;
     const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
-    
+
     // Improved color mapping for gradients and shadows
     const colorClasses = {
       'text-blue-600': 'from-blue-500 to-blue-400 shadow-blue-500/20',
@@ -422,14 +347,14 @@ const Dashboard = () => {
       'text-orange-600': 'from-orange-500 to-orange-400 shadow-orange-500/20',
       'text-red-600': 'from-red-500 to-red-400 shadow-red-500/20'
     };
-    
+
     const barColorClass = colorClasses[color] || 'from-primary to-green-400 shadow-primary/20';
 
     return (
       <div className="bg-white rounded border border-gray-100/50 p-5 shadow-sm hover:shadow-lg hover:ring-1 hover:ring-primary/20 transition-all duration-300 group relative overflow-hidden">
         {/* Decorative corner accent */}
         <div className={`absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 rounded-full opacity-5 ${bgColor} group-hover:opacity-10 transition-opacity`} />
-        
+
         <div className="flex items-center gap-3 mb-6 relative">
           <div className={`p-2.5 rounded ${bgColor} group-hover:rotate-12 transition-transform shadow-sm`}>
             <Icon className={`w-5 h-5 ${color}`} />
@@ -465,7 +390,7 @@ const Dashboard = () => {
               Efficiency
             </div>
           </div>
-          
+
           <div className="relative h-2.5 bg-gray-100 rounded-full overflow-hidden shadow-inner p-[2px]">
             {/* Progress Bar with Gradient & Shimmer */}
             <div
@@ -538,7 +463,6 @@ const Dashboard = () => {
             </div>
             <button
               onClick={handleRefresh}
-              disabled={refreshing}
               className="group flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-primary rounded hover:bg-primary-hover transition-all shadow-lg shadow-primary/20 active:scale-95"
             >
               <RefreshCw className={`w-4 h-4 transition-transform duration-500 ${refreshing ? 'animate-spin' : 'group-hover:rotate-180'}`} />

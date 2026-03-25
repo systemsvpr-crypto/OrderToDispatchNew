@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, X, Save, ChevronUp, ChevronDown, RefreshCw, Search } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSheets } from '../../contexts/SheetsContext';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useDataSync } from '../../utils/useDataSync';
 
@@ -9,336 +10,356 @@ const CACHE_KEY = 'orderData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const Order = () => {
-  const { showToast } = useToast();
-  const { user } = useAuth();
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [formData, setFormData] = useState({
-    orderDate: new Date().toISOString().split('T')[0],
-    clientName: '',
-    godownName: '',
-    items: [{ itemName: '', rate: '', qty: '' }]
-  });
+    const { showToast } = useToast();
+    const { user } = useAuth();
+    const { 
+        orders: rawOrders, 
+        isLoading: isLoadingOrders, 
+        refreshAll 
+    } = useSheets();
 
-  const [itemNames, setItemNames] = useState([]);
-  const [clients, setClients] = useState([]);
-  const [godowns, setGodowns] = useState([]);
+    const orders = useMemo(() => rawOrders, [rawOrders]);
 
-  const [searchTerm, setSearchTerm] = useState('');
-  const [clientFilter, setClientFilter] = useState('');
-  const [godownFilter, setGodownFilter] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
-  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    // --- Direct fetch for clients and itemNames (original working approach) ---
+    const [clients, setClients] = useState([]);
+    const [itemNames, setItemNames] = useState([]);
 
-  const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-  const MASTER_URL = import.meta.env.VITE_MASTER_URL;
-  const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
+    const MASTER_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzsybGNsW1jRz8MqT-971WLNFRJXgGEE9_QZDOCt3x4Y2snuRFxl_RQXD4HEO8ozMIn4g/exec';
 
-  // --- Fetch function for useDataSync ---
-  const fetchOrdersData = useCallback(async (signal) => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'ORDER');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+    useEffect(() => {
+        // Helper to extract all string values from any nested structure (skip numbers)
+        const extractStrings = (data) => {
+            const result = [];
+            const walk = (item) => {
+                if (Array.isArray(item)) { item.forEach(walk); return; }
+                if (item && typeof item === 'object') { Object.values(item).forEach(walk); return; }
+                if (item != null && String(item).trim() && isNaN(Number(item))) result.push(String(item).trim());
+            };
+            walk(data);
+            return result;
+        };
 
-    const response = await fetch(url.toString(), { signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const result = await response.json();
+        // Fetch clients from Purchase Vendor sheet, Column B
+        const fetchClients = async () => {
+            try {
+                const res = await fetch(`${MASTER_SCRIPT_URL}?sheet=Sales%20Vendor&mode=col&col=0&sheetId=1ewO_3413za_gEguwM-Bs733bUCnUSirmDbwgbtfvTp8`);
+                const json = await res.json();
+                if (json.success && json.data) {
+                    const all = extractStrings(json.data);
+                    const filtered = all.filter(v => v && !['client','client name','customer name','purchase vendor','vendor name'].includes(v.toLowerCase()));
+                    setClients([...new Set(filtered)].sort());
+                }
+            } catch (err) {
+                console.error('[Order] Failed to fetch clients:', err);
+            }
+        };
 
-    if (!result.success) throw new Error(result.error || 'Unknown error');
+        // Fetch item names from Products sheet, Column B
+        const fetchItemNames = async () => {
+            try {
+                const res = await fetch(`${MASTER_SCRIPT_URL}?sheet=Products&mode=col&col=1`);
+                const json = await res.json();
+                if (json.success && json.data) {
+                    const all = extractStrings(json.data);
+                    const filtered = all.filter(v => v && !['product','item name','product name'].includes(v.toLowerCase()));
+                    setItemNames([...new Set(filtered)].sort());
+                }
+            } catch (err) {
+                console.error('[Order] Failed to fetch item names:', err);
+            }
+        };
 
-    let dataArray = result.data;
-    if (!Array.isArray(dataArray)) dataArray = [];
+        fetchClients();
+        fetchItemNames();
+    }, []);
 
-    if (dataArray.length === 0) return [];
+    const formatDisplayDate = (dateStr) => {
+        if (!dateStr || dateStr === '-') return '-';
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return dateStr;
+            const day = date.getDate().toString().padStart(2, '0');
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const month = months[date.getMonth()];
+            const year = date.getFullYear();
+            return `${day}-${month}-${year}`;
+        } catch { return dateStr; }
+    };
 
-    const isArrayData = Array.isArray(dataArray[0]);
-    const dataToMap = dataArray.slice(5);
-
-    let mappedOrders;
-    if (isArrayData) {
-      mappedOrders = dataToMap.map(item => ({
-        orderNumber: item[1] || '-',
-        orderDate: item[2] || '-',
-        clientName: item[3] || '-',
-        godownName: item[4] || '-',
-        itemName: item[5] || '-',
-        rate: item[6] || '0',
-        qty: item[7] || '0',
-        currentStock: item[8] || '-',
-        intransitQty: item[9] || '-',
-        createdBy: item[24] || '-'
-      }));
-    } else {
-      mappedOrders = dataToMap.map(item => ({
-        orderNumber: item.orderNumber || '-',
-        orderDate: item.orderDate || '-',
-        clientName: item.clientName || '-',
-        godownName: item.godownName || '-',
-        itemName: item.itemName || '-',
-        rate: item.rate || '0',
-        qty: item.qty || '0',
-        currentStock: item.currentStock || '-',
-        intransitQty: item.intransitQty || '-',
-        createdBy: item.createdBy || '-'
-      }));
-    }
-    return mappedOrders;
-  }, [API_URL, SHEET_ID]);
-
-  // --- Use the sync hook ---
-  const { data: orders, loading: isLoadingOrders, refreshing: isRefreshingOrders, refresh: refreshOrders } = useDataSync(
-    'ORDER',
-    fetchOrdersData,
-    CACHE_KEY,
-    CACHE_DURATION
-  );
-
-  // --- Fetch master data (clients, godowns, items) ---
-  const fetchMasterData = useCallback(async () => {
-    const url = MASTER_URL?.trim();
-    if (!url) {
-      console.error('MASTER_URL is not defined or empty');
-      return;
-    }
-
-    try {
-      const [productsRes, clientsRes, godownsRes] = await Promise.all([
-        fetch(`${url}?sheet=Products`),
-        fetch(`${url}?sheet=Sales Vendor`),
-        fetch(`${url}?sheet=Products&col=4`)
-      ]);
-
-      const [productsJson, clientsJson, godownsJson] = await Promise.all([
-        productsRes.json(),
-        clientsRes.json(),
-        godownsRes.json()
-      ]);
-
-      const processData = (json) => {
-        if (json.success && Array.isArray(json.data)) {
-          if (Array.isArray(json.data[0])) {
-            return json.data.map(row => row[0]).filter(val => val !== null && val !== undefined && val !== '');
-          }
-          return json.data.filter(val => val !== null && val !== undefined && val !== '');
-        }
-        return [];
-      };
-
-      setItemNames(processData(productsJson));
-      setClients(processData(clientsJson));
-      setGodowns(processData(godownsJson));
-    } catch (error) {
-      console.error('fetchMasterData error:', error);
-      showToast('Error', 'Failed to load master data: ' + error.message);
-    }
-  }, [MASTER_URL, showToast]);
-
-  // --- Initial load of master data (no cache needed for now) ---
-  React.useEffect(() => {
-    fetchMasterData();
-  }, [fetchMasterData]);
-
-  // --- Format date for display ---
-  const formatDisplayDate = (dateStr) => {
-    if (!dateStr || dateStr === '-') return '-';
-    try {
-      const date = new Date(dateStr);
-      if (isNaN(date.getTime())) return dateStr;
-      const day = date.getDate().toString().padStart(2, '0');
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const month = months[date.getMonth()];
-      const year = date.getFullYear();
-      return `${day}-${month}-${year}`;
-    } catch {
-      return dateStr;
-    }
-  };
-
-  // --- Sorting logic ---
-  const requestSort = (key) => {
-    let direction = 'asc';
-    if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
-    setSortConfig({ key, direction });
-  };
-
-  const getSortedItems = useCallback((itemsToSort) => {
-    if (!sortConfig.key) return itemsToSort;
-
-    return [...itemsToSort].sort((a, b) => {
-      let aVal = a[sortConfig.key];
-      let bVal = b[sortConfig.key];
-
-      const aNum = parseFloat(String(aVal).replace(/[^0-9.-]+/g, ''));
-      const bNum = parseFloat(String(bVal).replace(/[^0-9.-]+/g, ''));
-      if (!isNaN(aNum) && !isNaN(bNum)) {
-        return sortConfig.direction === 'asc' ? aNum - bNum : bNum - aNum;
-      }
-
-      if (sortConfig.key === 'orderDate') {
-        const aDate = new Date(aVal);
-        const bDate = new Date(bVal);
-        if (!isNaN(aDate) && !isNaN(bDate)) {
-          return sortConfig.direction === 'asc' ? aDate - bDate : bDate - aDate;
-        }
-      }
-
-      aVal = String(aVal).toLowerCase();
-      bVal = String(bVal).toLowerCase();
-      if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
-      return 0;
-    });
-  }, [sortConfig]);
-
-  // --- Filter options ---
-  const filterClients = useMemo(() => [...new Set(orders?.map(o => o.clientName) || [])].filter(Boolean).sort(), [orders]);
-  const filterGodowns = useMemo(() => [...new Set(orders?.map(o => o.godownName) || [])].filter(Boolean).sort(), [orders]);
-
-  const filteredAndSortedOrders = useMemo(() => {
-    if (!orders) return [];
-    const filtered = orders.filter(order => {
-      const matchesSearch = Object.values(order).some(val =>
-        String(val).toLowerCase().includes(searchTerm.toLowerCase())
-      );
-      const matchesClient = !clientFilter || order.clientName === clientFilter;
-      const matchesGodown = !godownFilter || order.godownName === godownFilter;
-      return matchesSearch && matchesClient && matchesGodown;
-    });
-    return getSortedItems(filtered);
-  }, [orders, searchTerm, clientFilter, godownFilter, getSortedItems]);
-
-  // --- Form handlers ---
-  const handleAddItem = () => {
-    setFormData(prev => ({
-      ...prev,
-      items: [...prev.items, { itemName: '', rate: '', qty: '' }]
-    }));
-  };
-
-  const handleRemoveItem = (index) => {
-    setFormData(prev => ({
-      ...prev,
-      items: prev.items.filter((_, i) => i !== index)
-    }));
-  };
-
-  const handleItemChange = (index, field, value) => {
-    setFormData(prev => {
-      const newItems = [...prev.items];
-      newItems[index][field] = value;
-      return { ...prev, items: newItems };
-    });
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (isSubmitting) return;
-
-    setIsSubmitting(true);
-    try {
-      if (!API_URL || !SHEET_ID) {
-        showToast('Error', 'Missing API URL or Sheet ID');
-        return;
-      }
-
-      const payload = {
-        sheet: 'ORDER',
-        sheetId: SHEET_ID,
-        rows: formData.items.map(item => ({
-          orderDate: formData.orderDate,
-          clientName: formData.clientName,
-          godownName: formData.godownName,
-          itemName: item.itemName,
-          rate: item.rate,
-          qty: item.qty,
-          createdBy: user?.name || user?.id || 'Unknown'
-        }))
-      };
-
-      await fetch(API_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
-      });
-
-      setShowSuccessOverlay(true);
-      setFormData({
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [formData, setFormData] = useState({
         orderDate: new Date().toISOString().split('T')[0],
         clientName: '',
-        godownName: '',
-        items: [{ itemName: '', rate: '', qty: '' }]
-      });
-      setIsModalOpen(false);
+        items: [{ itemName: '', rate: '', qty: '', godownName: '', godownOptions: [], isFetchingGodowns: false }]
+    });
 
-      // Invalidate cache and refresh orders via the hook
-      sessionStorage.removeItem(CACHE_KEY);
-      await refreshOrders();
-      setTimeout(() => setShowSuccessOverlay(false), 2500);
-    } catch (error) {
-      console.error('Submit error:', error);
-      showToast('Error', 'Submission failed');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [clientFilter, setClientFilter] = useState('');
+    const [godownFilter, setGodownFilter] = useState('');
+    const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
 
-  // --- Manual refresh button handler ---
-  const handleRefresh = useCallback(() => {
-    sessionStorage.removeItem(CACHE_KEY);
-    refreshOrders();
-    fetchMasterData();
-  }, [refreshOrders, fetchMasterData]);
+    const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
+    const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
 
-  // --- Render ---
-  return (
-    <div className="">
-      {/* Header Section */}
-      <div className="max-w-[1200px] mx-auto bg-white p-4 sm:p-8 rounded shadow-sm border border-gray-100">
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="bg-primary/10 rounded-xl">
-                <Save className="text-primary w-6 h-6" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-black text-gray-900 tracking-tight">Orders</h1>
-                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-0.5">Manage Dispatch Orders</p>
-              </div>
-            </div>
+    // On mount: ensure data is loaded
+    useEffect(() => {
+        refreshAll();
+    }, [refreshAll]);
 
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleRefresh}
-                disabled={isRefreshingOrders}
-                className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 text-gray-600 rounded-xl hover:bg-gray-100 transition-all border border-gray-200 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest"
-              >
-                <RefreshCw size={16} className={isRefreshingOrders ? 'animate-spin' : ''} />
-                <span className="hidden sm:inline">Refresh</span>
-              </button>
+    // --- Fetch godowns: matchCol=1 (product B) + col=8 (godown I) from Apps Script ---
+    const GODOWN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzsybGNsW1jRz8MqT-971WLNFRJXgGEE9_QZDOCt3x4Y2snuRFxl_RQXD4HEO8ozMIn4g/exec';
+    const fetchGodownsForItem = useCallback(async (itemName, index) => {
+        if (!itemName) return;
 
-              <button
-                onClick={() => setIsModalOpen(true)}
-                className="flex items-center justify-center gap-2 px-6 py-2 bg-primary text-white rounded-xl hover:bg-primary-hover shadow-lg shadow-primary/20 font-black text-[10px] uppercase tracking-widest transition-all active:scale-95"
-              >
-                <Plus size={16} className="stroke-[3]" />
-                New Order
-              </button>
-            </div>
-          </div>
+        setFormData(prev => {
+            const newItems = [...prev.items];
+            newItems[index] = { ...newItems[index], isFetchingGodowns: true, godownName: '', godownOptions: [] };
+            return { ...prev, items: newItems };
+        });
 
-          {/* Filters */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center border-t border-gray-50">
-            <div className="md:col-span-2 relative">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by Client, Godown or Order Number..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-11 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/10 focus:border-primary focus:bg-white outline-none transition-all text-sm font-medium"
-              />
+        try {
+            // matchCol=1 → filter by col B (product name); col=8 → return col I (Godown Name)
+            // (Apps Script uses 0-based indexing: A=0, B=1, ..., I=8)
+            const url = `${GODOWN_SCRIPT_URL}?sheet=Products&col=8&matchCol=1&matchVal=${encodeURIComponent(itemName)}`;
+            const res = await fetch(url);
+            const json = await res.json();
+
+            const flat = arr => (Array.isArray(arr) ? arr.map(v => Array.isArray(v) ? v[0] : v) : []);
+            const options = flat(json?.data ?? []).filter(v => v !== null && v !== undefined && v !== '');
+            const unique = [...new Set(options)];
+
+            setFormData(prev => {
+                const newItems = [...prev.items];
+                const prefilledGodown = unique.length > 0 ? unique[0] : '';
+                newItems[index] = {
+                    ...newItems[index],
+                    isFetchingGodowns: false,
+                    godownOptions: unique,
+                    godownName: prefilledGodown
+                };
+                return { ...prev, items: newItems };
+            });
+        } catch (err) {
+            console.error('[Godown] error:', err);
+            setFormData(prev => {
+                const newItems = [...prev.items];
+                newItems[index] = { ...newItems[index], isFetchingGodowns: false, godownOptions: [] };
+                return { ...prev, items: newItems };
+            });
+        }
+    }, []);
+
+    // --- Manual refresh ---
+    const handleRefresh = useCallback(() => {
+        refreshAll(true);
+    }, [refreshAll]);
+
+    // --- Filtering and sorting ---
+    const requestSort = (key) => {
+        let direction = 'asc';
+        if (sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const getSortedItems = useCallback((itemsToSort) => {
+        if (!sortConfig.key) return itemsToSort;
+
+        return [...itemsToSort].sort((a, b) => {
+            let aVal = a[sortConfig.key];
+            let bVal = b[sortConfig.key];
+
+            const aNum = parseFloat(String(aVal).replace(/[^0-9.-]+/g, ''));
+            const bNum = parseFloat(String(bVal).replace(/[^0-9.-]+/g, ''));
+            if (!isNaN(aNum) && !isNaN(bNum)) {
+                return sortConfig.direction === 'asc' ? aNum - bNum : bNum - aNum;
+            }
+
+            if (sortConfig.key === 'orderDate') {
+                const aDate = new Date(aVal);
+                const bDate = new Date(bVal);
+                if (!isNaN(aDate) && !isNaN(bDate)) {
+                    return sortConfig.direction === 'asc' ? aDate - bDate : bDate - aDate;
+                }
+            }
+
+            aVal = String(aVal).toLowerCase();
+            bVal = String(bVal).toLowerCase();
+            if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+    }, [sortConfig]);
+
+    const filterClients = useMemo(() => [...new Set(orders.slice(5).map(o => o.clientName))].filter(Boolean).sort(), [orders]);
+    const filterGodowns = useMemo(() => [...new Set(orders.slice(5).map(o => o.godownName))].filter(Boolean).sort(), [orders]);
+    const sortedOrders = useMemo(() => orders.slice(5), [orders]);
+
+    const filteredAndSortedOrders = useMemo(() =>
+        getSortedItems(
+            sortedOrders.filter(order => {
+                const matchesSearch = Object.values(order).some(val =>
+                    String(val).toLowerCase().includes(searchTerm.toLowerCase())
+                );
+                const matchesClient = !clientFilter || order.clientName === clientFilter;
+                const matchesGodown = !godownFilter || order.godownName === godownFilter;
+                return matchesSearch && matchesClient && matchesGodown;
+            })
+        ),
+        [orders, searchTerm, clientFilter, godownFilter, getSortedItems]
+    );
+
+    // --- Form handlers ---
+    const handleAddItem = () => {
+        setFormData(prev => ({
+            ...prev,
+            items: [...prev.items, { itemName: '', rate: '', qty: '', godownName: '', godownOptions: [], isFetchingGodowns: false }]
+        }));
+    };
+
+    const handleRemoveItem = (index) => {
+        setFormData(prev => ({
+            ...prev,
+            items: prev.items.filter((_, i) => i !== index)
+        }));
+    };
+
+    const handleItemChange = (index, field, value) => {
+        setFormData(prev => {
+            const newItems = [...prev.items];
+            newItems[index] = { ...newItems[index], [field]: value };
+            return { ...prev, items: newItems };
+        });
+        if (field === 'itemName') {
+            fetchGodownsForItem(value, index);
+        }
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (isSubmitting) return;
+
+        setIsSubmitting(true);
+        try {
+            if (!API_URL || !SHEET_ID) {
+                showToast('Error', 'Missing API URL or Sheet ID');
+                return;
+            }
+
+            const payload = {
+                sheet: 'ORDER',
+                sheetId: SHEET_ID,
+                rows: formData.items.map(item => ({
+                    orderDate: formData.orderDate,
+                    clientName: formData.clientName,
+                    godownName: item.godownName,
+                    itemName: item.itemName,
+                    rate: item.rate,
+                    qty: item.qty,
+                    createdBy: user?.name || user?.id || 'Unknown'   // 👈 Corrected username
+                }))
+            };
+
+            // ✅ Fix: use no-cors mode and text/plain content type
+            await fetch(API_URL, {
+                method: 'POST',
+                mode: 'no-cors',               // prevents preflight
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify(payload)
+            });
+
+            // Success overlay and reset
+            setShowSuccessOverlay(true);
+            setFormData({
+                orderDate: new Date().toISOString().split('T')[0],
+                clientName: '',
+                items: [{ itemName: '', rate: '', qty: '', godownName: '', godownOptions: [], isFetchingGodowns: false }]
+            });
+            setIsModalOpen(false);
+
+            // Global refresh to sync across all pages
+            await refreshAll(true);
+            setTimeout(() => setShowSuccessOverlay(false), 2500);
+        } catch (error) {
+            console.error('Submit error:', error);
+            showToast('Error', 'Submission failed');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    // ----- Render -----
+    return (
+        <div className="p-3 sm:p-6 space-y-6">
+            {/* Header */}
+            {/* Header Section */}
+            <div className="max-w-[1200px] mx-auto bg-white p-4 sm:p-8 rounded shadow-sm border border-gray-100">
+                <div className="flex flex-col gap-6">
+                    {/* Top Row: Title, Action Buttons */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-primary/10 rounded-xl">
+                                <Save className="text-primary w-6 h-6" />
+                            </div>
+                            <div>
+                                <h1 className="text-2xl font-black text-gray-900 tracking-tight">Orders</h1>
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-0.5">Manage Dispatch Orders</p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={handleRefresh}
+                                disabled={isLoadingOrders}
+                                className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 text-gray-600 rounded-xl hover:bg-gray-100 transition-all border border-gray-200 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest"
+                            >
+                                <RefreshCw size={16} className={isLoadingOrders ? 'animate-spin' : ''} />
+                                <span className="hidden sm:inline">Refresh</span>
+                            </button>
+
+                            <button
+                                onClick={() => setIsModalOpen(true)}
+                                className="flex items-center justify-center gap-2 px-6 py-2 bg-primary text-white rounded-xl hover:bg-primary-hover shadow-lg shadow-primary/20 font-black text-[10px] uppercase tracking-widest transition-all active:scale-95"
+                            >
+                                <Plus size={16} className="stroke-[3]" />
+                                New Order
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Bottom Row: Filters and Search */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center border-t border-gray-50">
+                        <div className="md:col-span-2 relative">
+                            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input
+                                type="text"
+                                placeholder="Search by Client, Godown or Order Number..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="w-full pl-11 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/10 focus:border-primary focus:bg-white outline-none transition-all text-sm font-medium"
+                            />
+                        </div>
+
+                        <SearchableDropdown
+                            value={clientFilter}
+                            onChange={setClientFilter}
+                            options={filterClients}
+                            allLabel="All Clients"
+                            className="w-full"
+                        />
+
+                        <SearchableDropdown
+                            value={godownFilter}
+                            onChange={setGodownFilter}
+                            options={filterGodowns}
+                            allLabel="All Godowns"
+                            className="w-full"
+                        />
+                    </div>
+                </div>
             </div>
 
             <SearchableDropdown
@@ -541,101 +562,173 @@ const Order = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-6 sm:p-10 space-y-10 custom-scrollbar bg-slate-50">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Order Date</label>
-                    <div className="relative">
-                      <input
-                        type="date"
-                        required
-                        value={formData.orderDate}
-                        onChange={(e) => setFormData({ ...formData, orderDate: e.target.value })}
-                        className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none text-sm font-semibold shadow-sm transition-all"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2 lg:col-span-1">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Client Selection</label>
-                    <SearchableDropdown
-                      value={formData.clientName}
-                      onChange={(val) => setFormData({ ...formData, clientName: val })}
-                      options={clients}
-                      placeholder="Choose Client"
-                      showAll={false}
+            {/* Add Order Modal */}
+            {isModalOpen && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-6 lg:p-10 transition-all duration-500">
+                    {/* New Backdrop with blur */}
+                    <div
+                        className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-300"
+                        onClick={() => !isSubmitting && setIsModalOpen(false)}
                     />
-                  </div>
-                  <div className="space-y-2 lg:col-span-1">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Location / Godown</label>
-                    <SearchableDropdown
-                      value={formData.godownName}
-                      onChange={(val) => setFormData({ ...formData, godownName: val })}
-                      options={godowns}
-                      placeholder="Select Godown"
-                      showAll={false}
-                    />
-                  </div>
-                </div>
 
-                <div className="space-y-6">
-                  <div className="flex items-center gap-4 mb-2">
-                    <div className="h-[2px] flex-1 bg-gradient-to-r from-transparent via-gray-100 to-transparent"></div>
-                    <h3 className="text-[11px] font-black text-primary uppercase tracking-[0.3em] flex items-center gap-3">
-                      <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_10px_rgba(88,204,2,0.5)]"></span>
-                      Line Items
-                      <span className="px-2 py-0.5 bg-primary/10 rounded-lg text-[9px]">{formData.items.length}</span>
-                    </h3>
-                    <div className="h-[2px] flex-1 bg-gradient-to-r from-transparent via-gray-100 to-transparent"></div>
-                  </div>
+                    {/* Modal Card */}
+                    <div className="relative bg-white sm:rounded-[2.5rem] shadow-[0_40px_100px_rgba(0,0,0,0.25)] w-full h-full sm:h-auto sm:max-h-[85vh] sm:max-w-4xl lg:max-w-5xl flex flex-col overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-10 duration-500 ease-out border border-white/20">
+                        {/* Decorative background element */}
+                        <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
 
-                  <div className="space-y-5">
-                    {formData.items.map((item, index) => (
-                      <div
-                        key={index}
-                        className="group relative animate-in slide-in-from-right-10 duration-300"
-                        style={{ animationDelay: `${index * 50}ms` }}
-                      >
-                        <div className="relative flex flex-col gap-6 p-6 sm:p-8 bg-white border border-slate-200/60 sm:rounded-[2rem] shadow-sm hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10 transition-all duration-500">
-                          <div className="absolute -left-3 top-1/2 -translate-y-1/2 hidden sm:flex items-center justify-center w-6 h-6 bg-slate-50 text-[10px] font-black text-slate-400 rounded-full border border-slate-200 group-hover:bg-primary group-hover:text-white group-hover:border-primary transition-all duration-500">
-                            {index + 1}
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 items-end">
-                            <div className="sm:col-span-6">
-                              <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Product / Item Name</label>
-                              <SearchableDropdown
-                                value={item.itemName}
-                                onChange={(val) => handleItemChange(index, 'itemName', val)}
-                                options={itemNames}
-                                placeholder="Select Product"
-                                showAll={false}
-                              />
+                        {/* Glassmorphic Header */}
+                        <div className="relative px-6 py-3 sm:px-10 sm:py-4 border-b border-gray-50 flex justify-between items-center bg-white/80 backdrop-blur-md shrink-0 z-10">
+                            <div className="flex items-center gap-4">
+                                <div className="p-3 bg-primary rounded-2xl shadow-lg shadow-primary/20">
+                                    <Plus className="text-white w-5 h-5 stroke-[3]" />
+                                </div>
+                                <div>
+                                    <h2 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight">New Order</h2>
+                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] mt-0.5">Fill in the order details</p>
+                                </div>
                             </div>
-                            <div className="sm:col-span-3">
-                              <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Unit Price (₹)</label>
-                              <input
-                                type="number"
-                                required
-                                placeholder="0.00"
-                                value={item.rate}
-                                onChange={(e) => handleItemChange(index, 'rate', e.target.value)}
-                                className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none text-sm font-semibold transition-all shadow-sm"
-                              />
+                            <button
+                                onClick={() => !isSubmitting && setIsModalOpen(false)}
+                                className="group p-2 text-gray-400 hover:text-gray-900 transition-all bg-gray-50 hover:bg-gray-100 rounded-xl active:scale-90"
+                            >
+                                <X size={20} className="group-hover:rotate-90 transition-transform duration-300" />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-y-auto custom-scrollbar bg-slate-50">
+                            {/* Scrollable Content Area */}
+                            <div className="flex-1 p-4 sm:p-8 pb-20 space-y-6">
+                                {/* Order Metadata Section */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Order Date</label>
+                                        <div className="relative">
+                                            <input
+                                                type="date"
+                                                required
+                                                value={formData.orderDate}
+                                                onChange={(e) => setFormData({ ...formData, orderDate: e.target.value })}
+                                                className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none text-sm font-semibold shadow-sm transition-all"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Client Selection</label>
+                                        <SearchableDropdown
+                                            value={formData.clientName}
+                                            onChange={(val) => setFormData({ ...formData, clientName: val })}
+                                            options={clients}
+                                            placeholder="Choose Client"
+                                            showAll={false}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Items Section */}
+                                    <div className="space-y-4">
+
+                                    <div className="space-y-5">
+                                        {formData.items.map((item, index) => (
+                                            <div
+                                                key={index}
+                                                className="group relative animate-in slide-in-from-right-10 duration-300"
+                                                style={{ animationDelay: `${index * 50}ms` }}
+                                            >
+                                                <div className="relative flex flex-col gap-4 p-4 sm:p-6 bg-white border border-slate-200/60 sm:rounded-[2rem] shadow-sm hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10 transition-all duration-500 focus-within:z-50">
+                                                    {/* Index Marker */}
+                                                    <div className="absolute -left-3 top-1/2 -translate-y-1/2 hidden sm:flex items-center justify-center w-6 h-6 bg-slate-50 text-[10px] font-black text-slate-400 rounded-full border border-slate-200 group-hover:bg-primary group-hover:text-white group-hover:border-primary transition-all duration-500">
+                                                        {index + 1}
+                                                    </div>
+
+                                                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end">
+                                                        <div className="sm:col-span-4">
+                                                            <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Product / Item Name</label>
+                                                            <SearchableDropdown
+                                                                value={item.itemName}
+                                                                onChange={(val) => handleItemChange(index, 'itemName', val)}
+                                                                options={itemNames}
+                                                                placeholder="Select Product"
+                                                                showAll={false}
+                                                            />
+                                                        </div>
+                                                        <div className="sm:col-span-3">
+                                                            <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">
+                                                                Location / Godown
+                                                                {item.isFetchingGodowns && <span className="ml-2 text-primary animate-pulse">...</span>}
+                                                            </label>
+                                                            <input
+                                                                type="text"
+                                                                readOnly
+                                                                value={item.godownName}
+                                                                placeholder={item.isFetchingGodowns ? 'Fetching...' : 'Location / Godown'}
+                                                                className="w-full px-5 py-3.5 bg-slate-50/50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-600 outline-none cursor-default shadow-sm"
+                                                            />
+                                                        </div>
+                                                        <div className="sm:col-span-2">
+                                                            <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Unit Price (₹)</label>
+                                                            <input
+                                                                type="number"
+                                                                required
+                                                                placeholder="0.00"
+                                                                value={item.rate}
+                                                                onChange={(e) => handleItemChange(index, 'rate', e.target.value)}
+                                                                className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none text-sm font-semibold transition-all shadow-sm"
+                                                            />
+                                                        </div>
+                                                        <div className="sm:col-span-3 flex gap-4 items-end">
+                                                            <div className="flex-1">
+                                                                <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Qty</label>
+                                                                <input
+                                                                    type="number"
+                                                                    required
+                                                                    placeholder="0"
+                                                                    value={item.qty}
+                                                                    onChange={(e) => handleItemChange(index, 'qty', e.target.value)}
+                                                                    className="w-full px-5 py-3.5 bg-white border border-primary/20 rounded-2xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none text-sm font-black text-primary transition-all text-center shadow-sm"
+                                                                />
+                                                            </div>
+                                                            {formData.items.length > 1 && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleRemoveItem(index)}
+                                                                    className="shrink-0 p-3.5 text-red-400 hover:text-white transition-all bg-red-50/50 hover:bg-red-500 rounded-2xl active:scale-90 border border-red-100 mb-[1px]"
+                                                                    title="Remove Item"
+                                                                >
+                                                                    <X size={18} />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Action Buttons Inside Scroll Area */}
+                                    <div className="flex justify-center pt-4">
+                                        <button
+                                            type="button"
+                                            onClick={handleAddItem}
+                                            className="group flex items-center gap-3 px-8 py-4 bg-white border-2 border-dashed border-gray-200 text-gray-400 hover:border-primary hover:text-primary hover:bg-primary/5 transition-all rounded-3xl font-black text-[10px] uppercase tracking-widest"
+                                        >
+                                            <div className="p-1 bg-gray-50 group-hover:bg-primary/20 rounded-lg transition-colors">
+                                                <Plus size={14} className="group-hover:rotate-90 transition-transform duration-500" />
+                                            </div>
+                                            Add Another Item
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
-                            <div className="sm:col-span-3 flex gap-4 items-end">
-                              <div className="flex-1">
-                                <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Quantity</label>
-                                <input
-                                  type="number"
-                                  required
-                                  placeholder="0"
-                                  value={item.qty}
-                                  onChange={(e) => handleItemChange(index, 'qty', e.target.value)}
-                                  className="w-full px-5 py-3.5 bg-white border border-primary/20 rounded-2xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none text-sm font-black text-primary transition-all text-center shadow-sm"
-                                />
-                              </div>
-                              {formData.items.length > 1 && (
+
+                            {/* Glassmorphic Footer */}
+                            <div className="sticky bottom-0 px-6 py-6 sm:px-10 sm:py-8 border-t border-gray-100 bg-white/95 backdrop-blur-md flex flex-col sm:flex-row justify-end items-center gap-4 shrink-0 z-10 mt-auto shadow-[0_-10px_10px_-10px_rgba(0,0,0,0.02)]">
+                                <button
+                                    type="button"
+                                    onClick={() => !isSubmitting && setIsModalOpen(false)}
+                                    className="w-full sm:w-auto px-10 py-4 bg-gray-50 text-gray-400 rounded-2xl hover:bg-gray-100 hover:text-gray-900 transition-all font-black text-[10px] uppercase tracking-widest active:scale-95"
+                                >
+                                    Discard Changes
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveItem(index)}

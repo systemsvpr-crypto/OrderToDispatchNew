@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { BellRing, History, Save, X, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
-import { useDataSync } from '../../utils/useDataSync';
+import { useSheets } from '../../contexts/SheetsContext';
 
 const ORDER_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
 
@@ -11,89 +11,65 @@ const CACHE_KEY = 'informToPartyBeforeData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const InformToPartyBeforeDispatch = () => {
-    const [pendingItems, setPendingItems] = useState([]);
-    const [historyItems, setHistoryItems] = useState([]);
-    const [activeTab, setActiveTab] = useState('pending');
-    const [selectedRows, setSelectedRows] = useState({});
-    const [searchTerm, setSearchTerm] = useState('');
-    const [clientFilter, setClientFilter] = useState('');
-    const [godownFilter, setGodownFilter] = useState('');
-    const [isSaving, setIsSaving] = useState(false);
-    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
-    const { showToast } = useToast();
+    const { planning: rawPlanning, isLoading, refreshAll } = useSheets();
 
     const formatDisplayDate = (dateStr) => {
         if (!dateStr || dateStr === '-') return '-';
         try {
             const date = new Date(dateStr);
             if (isNaN(date.getTime())) return dateStr;
-            return date.toLocaleDateString('en-GB', {
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric'
-            }).replace(/ /g, '-');
-        } catch (e) {
-            return dateStr;
-        }
+            const day = date.getDate().toString().padStart(2, '0');
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const month = months[date.getMonth()];
+            const year = date.getFullYear();
+            return `${day}-${month}-${year}`;
+        } catch { return dateStr; }
     };
 
-    // --- Fetcher function for useDataSync ---
-    const fetchInformToPartyData = useCallback(async () => {
-        const response = await fetch(`${ORDER_URL}?sheet=Planning&mode=table`);
-        const result = await response.json();
+    const [activeTab, setActiveTab] = useState('pending');
+    const [selectedRows, setSelectedRows] = useState({});
+    const [searchTerm, setSearchTerm] = useState('');
+    const [clientFilter, setClientFilter] = useState('');
+    const [godownFilter, setGodownFilter] = useState('');
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const { showToast } = useToast();
 
-        if (result.success && result.data) {
-            const allItems = result.data.slice(4).map((item, index) => ({
-                id: `P${index}`,
-                orderNo: item.orderNumber || '-',
-                dispatchNo: item.dispatchNo || '-',
-                clientName: item.clientName || '-',
-                godownName: item.godownName || '-',
-                itemName: item.itemName || '-',
-                qty: item.qty || '-',
-                dispatchQty: item.dispatchQty || '-',
-                dispatchDate: item.dispatchDate || '-',
-                columnK: item.columnK || '',
-                columnL: item.columnL || ''
-            }));
+    // Compute items from global context
+    const allItems = useMemo(() => {
+        return rawPlanning.slice(3).map((item, index) => ({
+            id: `P${index}`,
+            sheetRow: item.sheetRow || (index + 4), // Store original sheet row for updates
+            orderNo: item.orderNumber || '-',
+            dispatchNo: item.dispatchNo || '-',
+            clientName: item.clientName || '-',
+            godownName: item.godownName || '-',
+            itemName: item.itemName || '-',
+            qty: item.qty || '-',
+            dispatchQty: item.dispatchQty || '-',
+            dispatchDate: item.dispatchDate || '-',
+            columnK: item.columnK || '',
+            columnL: item.columnL || ''
+        }));
+    }, [rawPlanning]);
 
-            // Pending: columnK not empty, columnL empty
-            const pending = allItems.filter(item =>
-                item.columnK && item.columnK.toString().trim() !== '' &&
-                (!item.columnL || item.columnL.toString().trim() === '')
-            );
+    const pendingItems = useMemo(() => {
+        return allItems.filter(item =>
+            item.columnK && item.columnK.toString().trim() !== '' &&
+            (!item.columnL || item.columnL.toString().trim() === '')
+        );
+    }, [allItems]);
 
-            // History: both columnK and columnL not empty
-            const history = allItems.filter(item =>
-                item.columnK && item.columnK.toString().trim() !== '' &&
-                item.columnL && item.columnL.toString().trim() !== ''
-            );
+    const historyItems = useMemo(() => {
+        return allItems.filter(item =>
+            item.columnK && item.columnK.toString().trim() !== '' &&
+            item.columnL && item.columnL.toString().trim() !== ''
+        );
+    }, [allItems]);
 
-            return { pending, history };
-        }
-        return { pending: [], history: [] };
-    }, []);
-
-    // --- Data Sync Hook ---
-    const { data: syncData, loading, refreshing, refresh } = useDataSync(
-        'Before Dispatch Sync',
-        fetchInformToPartyData,
-        CACHE_KEY,
-        CACHE_DURATION
-    );
-
-    // Sync hook data to local state
+    // Ensure data is loaded on mount
     useEffect(() => {
-        if (syncData) {
-            setPendingItems(syncData.pending || []);
-            setHistoryItems(syncData.history || []);
-        }
-    }, [syncData]);
-
-    // Refresh Handler
-    const handleRefresh = useCallback(() => {
-        refresh();
-    }, [refresh]);
+        refreshAll();
+    }, [refreshAll]);
 
     // Memoized Filter Options
     const allUniqueClients = useMemo(() =>
@@ -226,9 +202,9 @@ const InformToPartyBeforeDispatch = () => {
 
             showToast('Confirmation saved to "Before Dispatch" sheet successfully!', 'success');
 
-            // Clear selected rows and refresh data
+            // Global refresh to sync across all pages
+            await refreshAll(true);
             setSelectedRows({});
-            handleRefresh();
         } catch (error) {
             console.error('Submission failed:', error);
             showToast('Failed to submit confirmation. Please check console.', 'error');
@@ -237,7 +213,10 @@ const InformToPartyBeforeDispatch = () => {
         }
     };
 
-    // --- Memoized Filter Options ---
+    // Manual refresh
+    const handleRefresh = () => {
+        refreshAll(true);
+    };
 
     return (
         <div className="">
