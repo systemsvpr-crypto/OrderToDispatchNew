@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Save, Loader, X, Clock, History, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
+import { useDataSync } from '../../utils/useDataSync';
 
 const CACHE_KEY = 'skipDeliveredData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
@@ -10,7 +11,6 @@ const SkipDelivered = () => {
     const [pendingItems, setPendingItems] = useState([]);
     const [historyItems, setHistoryItems] = useState([]);
     const [activeTab, setActiveTab] = useState('pending');
-    const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [selectedRows, setSelectedRows] = useState({});
     const [editData, setEditData] = useState({});
@@ -70,93 +70,87 @@ const SkipDelivered = () => {
         }
     };
 
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { pending, history, godowns, timestamp } = JSON.parse(cached);
-            const age = Date.now() - timestamp;
-            if (age < CACHE_DURATION) {
-                return { pending, history, godowns };
-            }
-        } catch (e) { /* ignore */ }
-        return null;
-    }, []);
-
-    const saveToCache = useCallback((pending, history, godownsData) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-            pending,
-            history,
-            godowns: godownsData,
-            timestamp: Date.now()
-        }));
-    }, []);
-
-    // Fetch data from ORDER sheet and split into pending/history based on columns Q & R - Stable Fetcher
-    const fetchItems = useCallback(async (force = false) => {
-        setIsLoading(true);
-        try {
-            const [orderRes, skipRes] = await Promise.all([
-                fetch(`${API_URL}?sheet=ORDER&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`),
-                fetch(`${API_URL}?sheet=Skip&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`)
-            ]);
-
-            const [orderResult, skipResult] = await Promise.all([orderRes.json(), skipRes.json()]);
-
-            if (orderResult.success && Array.isArray(orderResult.data)) {
-                const pending = orderResult.data.slice(5).filter(item => {
-                    const qVal = String(item.columnQ || '').trim();
-                    const rVal = String(item.columnR || '').trim();
-                    const pendingQty = parseFloat(String(getVal(item, 'planningPendingQty', 11) || '0').replace(/[^0-9.-]+/g, ''));
-                    // Only show planned, un-finished items with positive pending quantity
-                    return qVal !== '' && rVal === '' && !isNaN(pendingQty) && pendingQty > 0;
-                }).map((item, idx) => ({
-                    originalIndex: idx,
-                    orderNumber: item.orderNumber || '-',
-                    orderDate: item.orderDate || '-',
-                    clientName: item.clientName || '-',
-                    godown: item.godownName || '-',
-                    itemName: item.itemName || '-',
-                    rate: item.rate || '0',
-                    orderQty: item.qty || '0',
-                    currentStock: item.currentStock || '-',
-                    planningQty: item.planningQty || '0',
-                    planningPendingQty: item.planningPendingQty || '0',
-                    qtyDelivered: item.qtyDelivered || '0',
-                    columnQ: item.columnQ || '',
-                    columnR: item.columnR || ''
-                }));
-                setPendingItems(pending);
-            }
-
-            if (skipResult.success && Array.isArray(skipResult.data)) {
-                const history = skipResult.data.slice(1) // Strictly skip header row
-                    .filter(row => row && (getVal(row, 'orderNumber', 0)))
-                    .map((item, idx) => ({
-                        originalIndex: idx,
-                        orderNumber: getVal(item, 'orderNumber', 0) || '-',
-                        orderDate: getVal(item, 'orderDate', 1) || '-',
-                        clientName: getVal(item, 'clientName', 2) || '-',
-                        godown: getVal(item, 'godown', 3) || '-',
-                        itemName: getVal(item, 'itemName', 4) || '-',
-                        rate: getVal(item, 'rate', 5) || '0',
-                        orderQty: getVal(item, 'orderQty', 6) || '0',
-                        dispatchQty: getVal(item, 'dispatchQty', 7) || '',
-                        dispatchDate: getVal(item, 'dispatchDate', 8) || '',
-                        godownName: getVal(item, 'godownName', 9) || '-',
-                        skipped: true
-                    }));
-                setHistoryItems(history);
-            }
-        } catch (error) {
-            console.error('Error fetching items:', error);
-            setPendingItems([]);
-            setHistoryItems([]);
-        } finally {
-            setIsLoading(false);
+    // --- Fetcher for ORDER sheet ---
+    const fetchOrderSheet = useCallback(async () => {
+        const res = await fetch(`${API_URL}?sheet=ORDER&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
+        const result = await res.json();
+        if (result.success && Array.isArray(result.data)) {
+            return result.data.slice(5).filter(item => {
+                const qVal = String(item.columnQ || '').trim();
+                const rVal = String(item.columnR || '').trim();
+                const pendingQty = parseFloat(String(getVal(item, 'planningPendingQty', 11) || '0').replace(/[^0-9.-]+/g, ''));
+                return qVal !== '' && rVal === '' && !isNaN(pendingQty) && pendingQty > 0;
+            }).map((item, idx) => ({
+                originalIndex: idx,
+                orderNumber: item.orderNumber || '-',
+                orderDate: item.orderDate || '-',
+                clientName: item.clientName || '-',
+                godown: item.godownName || '-',
+                itemName: item.itemName || '-',
+                rate: item.rate || '0',
+                orderQty: item.qty || '0',
+                currentStock: item.currentStock || '-',
+                planningQty: item.planningQty || '0',
+                planningPendingQty: item.planningPendingQty || '0',
+                qtyDelivered: item.qtyDelivered || '0',
+                columnQ: item.columnQ || '',
+                columnR: item.columnR || ''
+            }));
         }
+        throw new Error('Failed to fetch ORDER data');
     }, [API_URL, SHEET_ID]);
+
+    // --- Fetcher for Skip sheet ---
+    const fetchSkipSheet = useCallback(async () => {
+        const res = await fetch(`${API_URL}?sheet=Skip&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
+        const result = await res.json();
+        if (result.success && Array.isArray(result.data)) {
+            return result.data.slice(1)
+                .filter(row => row && (getVal(row, 'orderNumber', 0)))
+                .map((item, idx) => ({
+                    originalIndex: idx,
+                    orderNumber: getVal(item, 'orderNumber', 0) || '-',
+                    orderDate: getVal(item, 'orderDate', 1) || '-',
+                    clientName: getVal(item, 'clientName', 2) || '-',
+                    godown: getVal(item, 'godown', 3) || '-',
+                    itemName: getVal(item, 'itemName', 4) || '-',
+                    rate: getVal(item, 'rate', 5) || '0',
+                    orderQty: getVal(item, 'orderQty', 6) || '0',
+                    dispatchQty: getVal(item, 'dispatchQty', 7) || '',
+                    dispatchDate: getVal(item, 'dispatchDate', 8) || '',
+                    godownName: getVal(item, 'godownName', 9) || '-',
+                    skipped: true
+                }));
+        }
+        throw new Error('Failed to fetch Skip data');
+    }, [API_URL, SHEET_ID]);
+
+    // --- Data Sync Hooks ---
+    const {
+        data: orderSyncData,
+        loading: loadingOrders,
+        refreshing: refreshingOrders,
+        refresh: refreshOrders
+    } = useDataSync('Skip Pending Sync', fetchOrderSheet, 'skipPendingCache', CACHE_DURATION);
+
+    const {
+        data: skipSyncData,
+        loading: loadingSkip,
+        refreshing: refreshingSkip,
+        refresh: refreshSkip
+    } = useDataSync('Skip History Sync', fetchSkipSheet, 'skipHistoryCache', CACHE_DURATION);
+
+    const loading = loadingOrders || loadingSkip;
+    const refreshing = refreshingOrders || refreshingSkip;
+
+    // Sync hook data to local state
+    useEffect(() => {
+        if (orderSyncData) setPendingItems(orderSyncData);
+    }, [orderSyncData]);
+
+    useEffect(() => {
+        if (skipSyncData) setHistoryItems(skipSyncData);
+    }, [skipSyncData]);
 
     const fetchGodowns = useCallback(async () => {
         if (!MASTER_URL) return;
@@ -172,25 +166,10 @@ const SkipDelivered = () => {
         }
     }, [MASTER_URL]); // Stable: No state dependencies
 
-    // On mount: load from cache or fetch
+    // Fetch initial godowns
     useEffect(() => {
-        const cached = loadFromCache();
-        if (cached) {
-            setPendingItems(cached.pending);
-            setHistoryItems(cached.history);
-            setGodowns(cached.godowns);
-        } else {
-            fetchItems();
-            fetchGodowns();
-        }
-    }, [loadFromCache, fetchItems, fetchGodowns]);
-
-    // Dedicated Cache Sync Effect
-    useEffect(() => {
-        if (pendingItems.length > 0 || historyItems.length > 0 || godowns.length > 0) {
-            saveToCache(pendingItems, historyItems, godowns);
-        }
-    }, [pendingItems, historyItems, godowns, saveToCache]);
+        fetchGodowns();
+    }, [fetchGodowns]);
 
     // Independent UI State Management - Clear selection/edit data on tab switch
     useEffect(() => {
@@ -200,10 +179,10 @@ const SkipDelivered = () => {
 
     // --- Manual refresh ---
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        fetchItems(true);
+        refreshOrders();
+        refreshSkip();
         fetchGodowns();
-    }, [fetchItems, fetchGodowns]);
+    }, [refreshOrders, refreshSkip, fetchGodowns]);
 
     // Unique filter options (combine both pending and history)
     const allUniqueClients = useMemo(() =>
@@ -371,7 +350,7 @@ const SkipDelivered = () => {
     };
 
     return (
-        <div className="p-3 sm:p-6 lg:p-8">
+        <div className="">
             {/* Header with title, tabs, filters, and action button */}
             <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 rounded shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
                 <h1 className="text-xl font-bold text-gray-800">Skip Delivered</h1>
@@ -400,10 +379,10 @@ const SkipDelivered = () => {
                 {/* Refresh button */}
                 <button
                     onClick={handleRefresh}
-                    disabled={isLoading || isSaving}
+                    disabled={refreshing || isSaving}
                     className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                 >
-                    <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+                    <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
                     Refresh
                 </button>
 
@@ -443,8 +422,8 @@ const SkipDelivered = () => {
                 )}
             </div>
 
-            {/* Loading overlay */}
-            {(isLoading || isSaving) && (
+            {/* Loading overlay — first load only (background syncs are silent) */}
+            {(loading || isSaving) && (
                 <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
                     <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
                         <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
@@ -479,7 +458,7 @@ const SkipDelivered = () => {
             <div className="bg-white rounded shadow-sm border border-gray-200 overflow-hidden max-w-[1200px] mx-auto">
                 {/* Desktop table view */}
                 <div className="hidden md:block overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 max-h-[460px] overflow-y-auto">
-                    <table className="w-full text-left border-collapse min-w-[1600px]">
+                    <table className="w-full text-left border-collapse min-w-[1200px]">
                         <thead>
                             <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10 shadow-sm">
                                 {activeTab === 'pending' && <th className="px-6 py-4 text-center">Action</th>}

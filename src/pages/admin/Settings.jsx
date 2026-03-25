@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { UserPlus, Shield, Check, X, Trash2, Pencil, RefreshCw, Loader, Save, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
+import { useDataSync } from '../../utils/useDataSync';
 
 const CACHE_KEY = 'settingsUserData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const Settings = () => {
     const [users, setUsers] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [newUser, setNewUser] = useState({ name: '', id: '', password: '', role: 'user', pageAccess: ['Dashboard'] });
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -60,55 +60,43 @@ const Settings = () => {
         sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
     }, []);
 
-    // Stable Fetcher
-    const fetchUsers = useCallback(async (force = false) => {
-        if (!force) {
-            const cached = loadFromCache();
-            if (cached) {
-                setUsers(cached);
-                return;
-            }
+    // Fetch Users - Stable Fetcher for Hook
+    const fetchUsers = useCallback(async () => {
+        const response = await fetch(`${API_URL}?sheet=Login&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
+        const result = await response.json();
+        if (result.success && Array.isArray(result.data)) {
+            const mapped = result.data.map((item, idx) => {
+                const rawAccess = getVal(item, 'pageAccess', 'Access') || '';
+                const pageAccess = Array.isArray(rawAccess)
+                    ? rawAccess
+                    : String(rawAccess).split(',').map(s => s.trim()).filter(Boolean);
+
+                return {
+                    originalIndex: item.originalIndex || idx,
+                    name: item.name || getVal(item, 'userName', 'User Name') || '-',
+                    id: item.id || getVal(item, 'userId', 'User ID') || '-',
+                    password: item.password || '-',
+                    role: item.role || 'user',
+                    pageAccess
+                };
+            });
+            return mapped.filter(u => u.id !== '-' && u.id !== 'User ID');
         }
+        return [];
+    }, [API_URL, SHEET_ID]);
 
-        setIsLoading(true);
-        try {
-            const response = await fetch(`${API_URL}?sheet=Login&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
-            const result = await response.json();
-            if (result.success && Array.isArray(result.data)) {
-                // Map from B, C, D, E, F
-                const mapped = result.data.map((item, idx) => {
-                    const rawAccess = getVal(item, 'pageAccess', 'Access') || '';
-                    const pageAccess = Array.isArray(rawAccess)
-                        ? rawAccess
-                        : String(rawAccess).split(',').map(s => s.trim()).filter(Boolean);
+    // --- Data Sync Hook ---
+    const { 
+        data: syncData, 
+        loading, 
+        refreshing, 
+        refresh 
+    } = useDataSync('User Settings Sync', fetchUsers, 'settingsCache', CACHE_DURATION);
 
-                    return {
-                        originalIndex: item.originalIndex || idx,
-                        name: item.name || getVal(item, 'userName', 'User Name') || '-',
-                        id: item.id || getVal(item, 'userId', 'User ID') || '-',
-                        password: item.password || '-',
-                        role: item.role || 'user',
-                        pageAccess
-                    };
-                });
-                // Filter out header or empty rows if necessary (usually slice(0) is fine for mode=table)
-                const validUsers = mapped.filter(u => u.id !== '-' && u.id !== 'User ID');
-                setUsers(validUsers);
-                saveToCache(validUsers);
-            } else {
-                setUsers([]);
-            }
-        } catch (error) {
-            console.error('Error fetching users:', error);
-            showToast("Failed to fetch users", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    }, [API_URL, SHEET_ID, loadFromCache, saveToCache, showToast]);
-
+    // Sync hook data to local state
     useEffect(() => {
-        fetchUsers();
-    }, [fetchUsers]);
+        if (syncData) setUsers(syncData);
+    }, [syncData]);
 
     const filteredUsers = useMemo(() => {
         return users.filter(user =>
@@ -149,8 +137,7 @@ const Settings = () => {
             if (!result.success) throw new Error(result.error || 'Failed to save user');
 
             showToast(editingUser ? "User updated successfully" : "User added successfully");
-            sessionStorage.removeItem(CACHE_KEY);
-            await fetchUsers(true);
+            await refresh();
             setIsModalOpen(false);
             setEditingUser(null);
             setShowPassword(false);
@@ -194,8 +181,7 @@ const Settings = () => {
             if (!result.success) throw new Error(result.error || 'Failed to delete user');
 
             showToast("User removed", "error");
-            sessionStorage.removeItem(CACHE_KEY);
-            await fetchUsers(true);
+            await refresh();
         } catch (error) {
             console.error('Error deleting user:', error);
             showToast("Failed to delete: " + error.message, "error");
@@ -218,7 +204,7 @@ const Settings = () => {
     };
 
     return (
-        <div className="p-3 sm:p-6 lg:p-8">
+        <div className="">
             <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 rounded shadow-sm border border-gray-100">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-green-50 rounded text-primary"><Shield size={20} /></div>
@@ -232,10 +218,11 @@ const Settings = () => {
 
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={() => fetchUsers(true)}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200"
+                        onClick={() => refresh()}
+                        disabled={refreshing}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                     >
-                        <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+                        <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
                         Refresh
                     </button>
                     <input
@@ -314,7 +301,7 @@ const Settings = () => {
                                     </td>
                                 </tr>
                             ))}
-                            {filteredUsers.length === 0 && !isLoading && (
+                            {filteredUsers.length === 0 && !loading && (
                                 <tr>
                                     <td colSpan="4" className="px-6 py-12 text-center text-gray-500 italic">No users found. Try searching or refresh data.</td>
                                 </tr>
@@ -351,7 +338,8 @@ const Settings = () => {
                 ))}
             </div>
 
-            {(isLoading || isSaving) && (
+            {/* Loading overlay — first load or saving (background syncs are silent) */}
+            {(loading || isSaving) && (
                 <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
                     <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
                         <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>

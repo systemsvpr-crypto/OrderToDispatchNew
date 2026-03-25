@@ -218,7 +218,7 @@ const PcReport = () => {
     }, [currentItem, formData, API_URL, SHEET_ID, loadData]);
 
     return (
-        <div className="p-3 sm:p-6 lg:p-8">
+        <div className="">
             <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 lg:p-5 rounded shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
                 <h1 className="text-xl font-bold text-gray-800">PC Report</h1>
                 <button

@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader, X, Filter, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
+import { useDataSync } from '../../utils/useDataSync';
 
 const CACHE_KEY = 'godownData';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const Godown = () => {
     const [items, setItems] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [godownFilter, setGodownFilter] = useState('All');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
@@ -42,72 +42,44 @@ const Godown = () => {
         } catch { return dateStr; }
     };
 
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_DURATION) return data;
-        } catch (e) { /* ignore */ }
-        return null;
-    }, []);
-
-    const saveToCache = useCallback((data) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
-    }, []);
-
-    // Fetch Planning data - Stable Fetcher
-    const fetchPlanning = useCallback(async (force = false) => {
-        setIsLoading(true);
-        try {
-            const response = await fetch(`${API_URL}?sheet=Planning&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
-            const result = await response.json();
-            if (result.success && Array.isArray(result.data)) {
-                const mapped = result.data.slice(3).map(item => ({
-                    originalIndex: item.originalIndex,
-                    dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No') || '-',
-                    dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date') || '-',
-                    orderNo: getVal(item, 'orderNumber', 'Order No', 'Order Number') || '-',
-                    customerName: getVal(item, 'clientName', 'Customer', 'Customer Name') || '-',
-                    productName: getVal(item, 'itemName', 'Product', 'Product Name') || '-',
-                    orderQty: getVal(item, 'qty', 'Order Qty') || '0',
-                    dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty') || '0',
-                    godown: getVal(item, 'godownName', 'Godown') || '-',
-                    gstIncluded: getVal(item, 'gstIncluded', 'GST Included') || '-'
-                }));
-                setItems(mapped);
-            } else {
-                setItems([]);
-            }
-        } catch (error) {
-            console.error('Error fetching Planning:', error);
-            setItems([]);
-        } finally {
-            setIsLoading(false);
+    // Fetch Planning data - Stable Fetcher for Hook
+    const fetchPlanning = useCallback(async () => {
+        const response = await fetch(`${API_URL}?sheet=Planning&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
+        const result = await response.json();
+        if (result.success && Array.isArray(result.data)) {
+            return result.data.slice(3).map(item => ({
+                originalIndex: item.originalIndex,
+                dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No') || '-',
+                dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date') || '-',
+                orderNo: getVal(item, 'orderNumber', 'Order No', 'Order Number') || '-',
+                customerName: getVal(item, 'clientName', 'Customer', 'Customer Name') || '-',
+                productName: getVal(item, 'itemName', 'Product', 'Product Name') || '-',
+                orderQty: getVal(item, 'qty', 'Order Qty') || '0',
+                dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty') || '0',
+                godown: getVal(item, 'godownName', 'Godown') || '-',
+                gstIncluded: getVal(item, 'gstIncluded', 'GST Included') || '-'
+            }));
         }
+        return [];
     }, [API_URL, SHEET_ID]);
 
-    // On mount
-    useEffect(() => {
-        const cachedData = loadFromCache();
-        if (cachedData) {
-            setItems(cachedData);
-        } else {
-            fetchPlanning();
-        }
-    }, [loadFromCache, fetchPlanning]);
+    // --- Data Sync Hook ---
+    const { 
+        data: syncData, 
+        loading, 
+        refreshing, 
+        refresh 
+    } = useDataSync('Godown Management Sync', fetchPlanning, 'godownCache', CACHE_DURATION);
 
-    // Cache Sync
+    // Sync hook data to local state
     useEffect(() => {
-        if (items.length > 0) saveToCache(items);
-    }, [items, saveToCache]);
+        if (syncData) setItems(syncData);
+    }, [syncData]);
 
     // Manual Refresh
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        fetchPlanning(true);
-    }, [fetchPlanning]);
+        refresh();
+    }, [refresh]);
 
     // Sorting logic
     const requestSort = (key) => {
@@ -156,7 +128,7 @@ const Godown = () => {
     }, {}), [items]);
 
     return (
-        <div className="p-3 sm:p-6 lg:p-8">
+        <div className="">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4 bg-white p-4 rounded shadow-sm border border-white/50 max-w-[1200px] mx-auto">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-green-50 rounded text-primary"><Filter size={20} /></div>
@@ -169,9 +141,10 @@ const Godown = () => {
                 <div className="flex items-center gap-3">
                     <button
                         onClick={handleRefresh}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200"
+                        disabled={refreshing}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                     >
-                        <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+                        <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
                         Refresh
                     </button>
                     <div className="relative w-full sm:w-64">
@@ -260,7 +233,8 @@ const Godown = () => {
                     </table>
                 </div>
             </div>
-            {isLoading && (
+            {/* Loading overlay — first load only (background syncs are silent) */}
+            {loading && (
                 <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
                     <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
                         <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>

@@ -185,7 +185,7 @@ const AdminLayout = () => {
             pb-24 sm:pb-32
           `}
         >
-          <div className="p-0 sm:p-4 max-w-[1600px] mx-auto">
+          <div className="p-0 sm:p-4 max-w-[1200px] mx-auto">
             <Outlet />
           </div>
         </main>

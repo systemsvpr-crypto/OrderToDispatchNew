@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   FileText,
   Truck,
@@ -28,6 +28,7 @@ import {
   Filler,
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
+import { useDataSync } from '../../utils/useDataSync';
 import { useToast } from '../../contexts/ToastContext';
 
 ChartJS.register(
@@ -81,56 +82,169 @@ const Dashboard = () => {
   const [allMonthlyMap, setAllMonthlyMap] = useState({ months: [], clientData: new Map() });
   // New state for godown load (from Planning sheet)
   const [godownLoad, setGodownLoad] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Initial Load with Cache Support
-  useEffect(() => {
-    const cached = sessionStorage.getItem(CACHE_KEY);
-    if (cached) {
-      try {
-        const { stats: cStats, trim: cTrend, godown: cGodown, timestamp } = JSON.parse(cached);
-        const age = Date.now() - timestamp;
-        if (age < CACHE_DURATION) {
-          setStats(cStats);
-          // Deep deserialize: Convert nested entries arrays back to Maps
-          setAllMonthlyMap({
-            months: cTrend.months || [],
-            clientData: new Map((cTrend.clientData || []).map(([client, monthEntries]) => [
-              client,
-              new Map(monthEntries)
-            ]))
-          });
-          setGodownLoad(cGodown || []);
-          setLoading(false);
-          return; // Skip fetch if cache is fresh
-        }
-      } catch (e) {
-        // Cache corrupted
-      }
-    }
-    loadDashboardData();
+  // --- Fetcher for ORDER sheet ---
+  const fetchOrderSheet = useCallback(async () => {
+    const url = new URL(API_URL);
+    url.searchParams.set('sheet', 'ORDER');
+    url.searchParams.set('mode', 'table');
+    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+    
+    const res = await fetch(url.toString());
+    const result = await res.json();
+    if (result.success && Array.isArray(result.data)) return result.data.slice(5);
+    throw new Error('Failed to fetch ORDER data');
   }, []);
 
-  // Sync state changes to cache
+  // --- Fetcher for Planning sheet ---
+  const fetchPlanningSheet = useCallback(async () => {
+    const url = new URL(API_URL);
+    url.searchParams.set('sheet', 'Planning');
+    url.searchParams.set('mode', 'table');
+    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+    
+    const res = await fetch(url.toString());
+    const result = await res.json();
+    if (result.success && Array.isArray(result.data)) return result.data.slice(3);
+    throw new Error('Failed to fetch Planning data');
+  }, []);
+
+  // --- Data Sync Hooks ---
+  const { 
+    data: orderData, 
+    loading: loadingOrders, 
+    refreshing: refreshingOrders, 
+    refresh: refreshOrders 
+  } = useDataSync('Dashboard Orders', fetchOrderSheet, 'dashboardOrders', CACHE_DURATION);
+
+  const { 
+    data: planningData, 
+    loading: loadingPlanning, 
+    refreshing: refreshingPlanning, 
+    refresh: refreshPlanning 
+  } = useDataSync('Dashboard Planning', fetchPlanningSheet, 'dashboardPlanning', CACHE_DURATION);
+
+  const loading = loadingOrders || loadingPlanning;
+  const refreshing = refreshingOrders || refreshingPlanning;
+
+  // Derive stats when data changes
   useEffect(() => {
-    if (!loading && (stats.orderQtySum > 0 || allMonthlyMap.months.length > 0)) {
-      // Deep serialize: Convert nested Maps to entries arrays for JSON serialization
-      const serializedTrends = {
-        months: allMonthlyMap.months,
-        clientData: Array.from(allMonthlyMap.clientData.entries()).map(([client, monthMap]) => [
-          client,
-          Array.from(monthMap.entries())
-        ])
-      };
-      sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-        stats,
-        trim: serializedTrends,
-        godown: godownLoad,
-        timestamp: Date.now()
-      }));
+    if (!orderData) return;
+
+    // Sums for cards
+    const orderQtySum = orderData.reduce((sum, item) => sum + safeNumber(getVal(item, 'planningQty', 10)), 0);
+    const cancelQtySum = orderData.reduce((sum, item) => sum + safeNumber(item.cancelQty), 0);
+    const remainingQtySum = orderData.reduce((sum, item) => {
+      const val = safeNumber(getVal(item, 'planningPendingQty', 11));
+      return sum + (val > 0 ? val : 0);
+    }, 0);
+    const deliveredQtySum = orderData.reduce((sum, item) => sum + safeNumber(item.qtyDelivered), 0);
+
+    // Stage 1 counts (columns Q & R)
+    const stage1 = countStage(orderData, 'columnQ', 'columnR');
+
+    // Build monthly trends
+    const monthlyMap = new Map();
+    orderData.forEach(order => {
+      if (order.orderDate && order.orderDate !== "-") {
+        const date = new Date(order.orderDate);
+        if (!isNaN(date.getTime())) {
+          const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+          const client = (order.clientName || "Unknown").trim();
+          const qty = safeNumber(order.qty);
+
+          if (!monthlyMap.has(monthKey)) {
+            monthlyMap.set(monthKey, new Map());
+          }
+          const clientMonthMap = monthlyMap.get(monthKey);
+          const data = clientMonthMap.get(client) || {
+            qty: 0,
+            planningQty: 0,
+            remainingQty: 0,
+            deliveredQty: 0,
+            cancelQty: 0,
+            completedCount: 0
+          };
+
+          data.qty += qty;
+          data.planningQty += safeNumber(getVal(order, 'planningQty', 10));
+          data.remainingQty += safeNumber(getVal(order, 'planningPendingQty', 11));
+          data.deliveredQty += safeNumber(getVal(order, 'qtyDelivered', 12));
+          data.cancelQty += safeNumber(getVal(order, 'cancelQty', 13));
+
+          const status = String(getVal(order, 'dispatchStatus', 14) || '').toLowerCase();
+          if (status.includes('complete')) {
+            data.completedCount++;
+          }
+
+          clientMonthMap.set(client, data);
+        }
+      }
+    });
+
+    // Sorted months
+    const rawMonths = Array.from(monthlyMap.keys()).sort();
+    let sortedMonths = [];
+    if (rawMonths.length > 0) {
+      try {
+        const start = new Date(rawMonths[0] + '-01');
+        const end = new Date(rawMonths[rawMonths.length - 1] + '-01');
+        let current = new Date(start);
+        while (current <= end) {
+          const mKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+          sortedMonths.push(mKey);
+          current.setMonth(current.getMonth() + 1);
+        }
+      } catch (e) {
+        sortedMonths = rawMonths;
+      }
     }
-  }, [stats, allMonthlyMap, godownLoad, loading]);
+
+    setAllMonthlyMap({ months: sortedMonths, clientData: monthlyMap });
+    setStats(prev => ({
+      ...prev,
+      orderQtySum,
+      cancelQtySum,
+      remainingQtySum,
+      deliveredQtySum,
+      pendingPlanning: stage1.pending,
+      completedPlanning: stage1.completed
+    }));
+  }, [orderData]);
+
+  // Derive planning stats
+  useEffect(() => {
+    if (!planningData) return;
+
+    const stage2 = countStage(planningData, 'columnK', 'columnL');
+    const stage3 = countStage(planningData, 'columnO', ['columnO', 'columnP']);
+    const stage4 = countStage(planningData, 'columnT', ['columnT', 'columnU']);
+
+    setStats(prev => ({
+      ...prev,
+      pendingNotification: stage2.pending,
+      completedNotification: stage2.completed,
+      pendingCompletion: stage3.pending,
+      completedCompletion: stage3.completed,
+      pendingPostNotify: stage4.pending,
+      fullyCompleted: stage4.completed
+    }));
+
+    const godownMap = new Map();
+    planningData.forEach(item => {
+      const godown = item.godownName || 'Unassigned';
+      const qty = safeNumber(item.dispatchQty);
+      if (qty > 0) {
+        godownMap.set(godown, (godownMap.get(godown) || 0) + qty);
+      }
+    });
+
+    const godownArray = Array.from(godownMap.entries())
+      .map(([godown, total]) => ({ godown, total }))
+      .sort((a, b) => b.total - a.total);
+    setGodownLoad(godownArray);
+  }, [planningData]);
 
   const safeNumber = (val) => {
     const num = parseFloat(val);
@@ -169,161 +283,10 @@ const Dashboard = () => {
     }
   };
 
-  const loadDashboardData = async () => {
-    setLoading(true);
-    try {
-      // ===== 1. Fetch ORDER sheet data =====
-      const orderUrl = new URL(API_URL);
-      orderUrl.searchParams.set('sheet', 'ORDER');
-      orderUrl.searchParams.set('mode', 'table');
-      if (SHEET_ID) orderUrl.searchParams.set('sheetId', SHEET_ID);
-
-      const orderRes = await fetch(orderUrl.toString());
-      const orderResult = await orderRes.json();
-
-      if (orderResult.success && Array.isArray(orderResult.data)) {
-        const orders = orderResult.data.slice(5); // adjust slicing if needed
-
-        // Sums for the four cards
-        const orderQtySum = orders.reduce((sum, item) => sum + safeNumber(getVal(item, 'planningQty', 10)), 0);
-        const cancelQtySum = orders.reduce((sum, item) => sum + safeNumber(item.cancelQty), 0);
-        const remainingQtySum = orders.reduce((sum, item) => {
-          const val = safeNumber(getVal(item, 'planningPendingQty', 11));
-          return sum + (val > 0 ? val : 0);
-        }, 0);
-        const deliveredQtySum = orders.reduce((sum, item) => sum + safeNumber(item.qtyDelivered), 0);
-
-        // Stage 1 counts (columns Q & R)
-        const stage1 = countStage(orders, 'columnQ', 'columnR');
-
-        // Build monthly trends: Total quantity per client per month
-        const monthlyMap = new Map();
-        orders.forEach(order => {
-          if (order.orderDate && order.orderDate !== "-") {
-            const date = new Date(order.orderDate);
-            if (!isNaN(date.getTime())) {
-              const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-              const client = (order.clientName || "Unknown").trim();
-              const qty = safeNumber(order.qty);
-
-              if (!monthlyMap.has(monthKey)) {
-                monthlyMap.set(monthKey, new Map());
-              }
-              const clientMonthMap = monthlyMap.get(monthKey);
-              const data = clientMonthMap.get(client) || {
-                qty: 0,
-                planningQty: 0,
-                remainingQty: 0,
-                deliveredQty: 0,
-                cancelQty: 0,
-                completedCount: 0
-              };
-
-              data.qty += qty;
-              data.planningQty += safeNumber(getVal(order, 'planningQty', 10));
-              data.remainingQty += safeNumber(getVal(order, 'planningPendingQty', 11));
-              data.deliveredQty += safeNumber(getVal(order, 'qtyDelivered', 12));
-              data.cancelQty += safeNumber(getVal(order, 'cancelQty', 13));
-
-              const status = String(getVal(order, 'dispatchStatus', 14) || '').toLowerCase();
-              if (status.includes('complete')) {
-                data.completedCount++;
-              }
-
-              clientMonthMap.set(client, data);
-            }
-          }
-        });
-
-        // Get sorted months and ensure continuity
-        const rawMonths = Array.from(monthlyMap.keys()).sort();
-        let sortedMonths = [];
-        if (rawMonths.length > 0) {
-          try {
-            const start = new Date(rawMonths[0] + '-01');
-            const end = new Date(rawMonths[rawMonths.length - 1] + '-01');
-            let current = new Date(start);
-            while (current <= end) {
-              const mKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
-              sortedMonths.push(mKey);
-              current.setMonth(current.getMonth() + 1);
-            }
-          } catch (e) {
-            sortedMonths = rawMonths;
-          }
-        }
-
-        // Store the master trend data
-        setAllMonthlyMap({
-          months: sortedMonths,
-          clientData: monthlyMap
-        });
-
-        setStats(prev => ({
-          ...prev,
-          orderQtySum,
-          cancelQtySum,
-          remainingQtySum,
-          deliveredQtySum,
-          pendingPlanning: stage1.pending,
-          completedPlanning: stage1.completed
-        }));
-      } else {
-        showToast('Failed to load ORDER data', 'error');
-      }
-
-      // ===== 2. Fetch Planning sheet data =====
-      const planningUrl = new URL(API_URL);
-      planningUrl.searchParams.set('sheet', 'Planning');
-      planningUrl.searchParams.set('mode', 'table');
-      if (SHEET_ID) planningUrl.searchParams.set('sheetId', SHEET_ID);
-
-      const planningRes = await fetch(planningUrl.toString());
-      const planningResult = await planningRes.json();
-
-      if (planningResult.success && Array.isArray(planningResult.data)) {
-        const planningRows = planningResult.data.slice(3);
-
-        // Stage counts (existing)
-        const stage2 = countStage(planningRows, 'columnK', 'columnL');
-        const stage3 = countStage(planningRows, 'columnO', ['columnO', 'columnP']);
-        const stage4 = countStage(planningRows, 'columnT', ['columnT', 'columnU']);
-
-        setStats(prev => ({
-          ...prev,
-          pendingNotification: stage2.pending,
-          completedNotification: stage2.completed,
-          pendingCompletion: stage3.pending,
-          completedCompletion: stage3.completed,
-          pendingPostNotify: stage4.pending,
-          fullyCompleted: stage4.completed
-        }));
-
-        // ===== Compute Godown Load from Planning sheet =====
-        const godownMap = new Map();
-        planningRows.forEach(item => {
-          const godown = item.godownName || 'Unassigned';
-          const qty = safeNumber(item.dispatchQty); // using dispatch quantity as load
-          if (qty > 0) {
-            godownMap.set(godown, (godownMap.get(godown) || 0) + qty);
-          }
-        });
-
-        // Convert to array and sort by load descending
-        const godownArray = Array.from(godownMap.entries())
-          .map(([godown, total]) => ({ godown, total }))
-          .sort((a, b) => b.total - a.total);
-        setGodownLoad(godownArray);
-      } else {
-        showToast('Failed to load Planning data', 'error');
-      }
-    } catch (error) {
-      console.error('Error loading dashboard data:', error);
-      showToast('Error loading data', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const handleRefresh = useCallback(() => {
+    refreshOrders();
+    refreshPlanning();
+  }, [refreshOrders, refreshPlanning]);
 
   // Reactive Chart Data Construction – Handles 1000s of clients professionally
   const monthlyTrendData = React.useMemo(() => {
@@ -574,14 +537,12 @@ const Dashboard = () => {
               <span className="text-xs font-bold text-gray-700">{new Date().toLocaleTimeString()}</span>
             </div>
             <button
-              onClick={() => {
-                sessionStorage.removeItem(CACHE_KEY);
-                loadDashboardData();
-              }}
+              onClick={handleRefresh}
+              disabled={refreshing}
               className="group flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-primary rounded hover:bg-primary-hover transition-all shadow-lg shadow-primary/20 active:scale-95"
             >
-              <RefreshCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
-              Refresh Analytics
+              <RefreshCw className={`w-4 h-4 transition-transform duration-500 ${refreshing ? 'animate-spin' : 'group-hover:rotate-180'}`} />
+              {refreshing ? 'Refreshing...' : 'Refresh Analytics'}
             </button>
           </div>
         </div>

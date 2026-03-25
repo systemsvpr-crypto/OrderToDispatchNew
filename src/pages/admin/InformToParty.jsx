@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { BellRing, History, Save, X, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
+import { useDataSync } from '../../utils/useDataSync';
 
 const ORDER_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
 
@@ -17,7 +18,7 @@ const InformToPartyBeforeDispatch = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [clientFilter, setClientFilter] = useState('');
     const [godownFilter, setGodownFilter] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
     const { showToast } = useToast();
 
@@ -36,80 +37,63 @@ const InformToPartyBeforeDispatch = () => {
         }
     };
 
-    // Fetch data from Planning sheet – using columns K and L
-    const fetchData = useCallback(async (forceRefresh = false) => {
-        setIsLoading(true);
-        try {
-            const planningRes = await fetch(`${ORDER_URL}?sheet=Planning&mode=table`);
-            const planningResult = await planningRes.json();
+    // --- Fetcher function for useDataSync ---
+    const fetchInformToPartyData = useCallback(async () => {
+        const response = await fetch(`${ORDER_URL}?sheet=Planning&mode=table`);
+        const result = await response.json();
 
-            if (planningResult.success && planningResult.data) {
-                const allItems = planningResult.data.slice(4).map((item, index) => ({
-                    id: `P${index}`,
-                    orderNo: item.orderNumber || '-',
-                    dispatchNo: item.dispatchNo || '-',
-                    clientName: item.clientName || '-',
-                    godownName: item.godownName || '-',
-                    itemName: item.itemName || '-',
-                    qty: item.qty || '-',
-                    dispatchQty: item.dispatchQty || '-',
-                    dispatchDate: item.dispatchDate || '-',
-                    columnK: item.columnK || '',
-                    columnL: item.columnL || ''
-                }));
+        if (result.success && result.data) {
+            const allItems = result.data.slice(4).map((item, index) => ({
+                id: `P${index}`,
+                orderNo: item.orderNumber || '-',
+                dispatchNo: item.dispatchNo || '-',
+                clientName: item.clientName || '-',
+                godownName: item.godownName || '-',
+                itemName: item.itemName || '-',
+                qty: item.qty || '-',
+                dispatchQty: item.dispatchQty || '-',
+                dispatchDate: item.dispatchDate || '-',
+                columnK: item.columnK || '',
+                columnL: item.columnL || ''
+            }));
 
-                // Pending: columnK not empty, columnL empty
-                const pending = allItems.filter(item =>
-                    item.columnK && item.columnK.toString().trim() !== '' &&
-                    (!item.columnL || item.columnL.toString().trim() === '')
-                );
+            // Pending: columnK not empty, columnL empty
+            const pending = allItems.filter(item =>
+                item.columnK && item.columnK.toString().trim() !== '' &&
+                (!item.columnL || item.columnL.toString().trim() === '')
+            );
 
-                // History: both columnK and columnL not empty
-                const history = allItems.filter(item =>
-                    item.columnK && item.columnK.toString().trim() !== '' &&
-                    item.columnL && item.columnL.toString().trim() !== ''
-                );
+            // History: both columnK and columnL not empty
+            const history = allItems.filter(item =>
+                item.columnK && item.columnK.toString().trim() !== '' &&
+                item.columnL && item.columnL.toString().trim() !== ''
+            );
 
-                setPendingItems(pending);
-                setHistoryItems(history);
-            }
-        } catch (error) {
-            console.error('Error fetching data:', error);
-        } finally {
-            setIsLoading(false);
+            return { pending, history };
         }
-    }, []); // Stable fetcher
+        return { pending: [], history: [] };
+    }, []);
 
-    // Load cached data on mount, or fetch if stale/missing
+    // --- Data Sync Hook ---
+    const { data: syncData, loading, refreshing, refresh } = useDataSync(
+        'Before Dispatch Sync',
+        fetchInformToPartyData,
+        CACHE_KEY,
+        CACHE_DURATION
+    );
+
+    // Sync hook data to local state
     useEffect(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (cached) {
-            try {
-                const { pendingItems: cachedPending, historyItems: cachedHistory, timestamp } = JSON.parse(cached);
-                const age = Date.now() - timestamp;
-                if (age < CACHE_DURATION) {
-                    setPendingItems(cachedPending);
-                    setHistoryItems(cachedHistory);
-                    return; // Use cache, skip fetch
-                }
-            } catch (e) {
-                // Cache corrupted – ignore and fetch fresh
-            }
+        if (syncData) {
+            setPendingItems(syncData.pending || []);
+            setHistoryItems(syncData.history || []);
         }
-        fetchData();
-    }, [fetchData]);
+    }, [syncData]);
 
-    // Auto‑cache on state changes
-    useEffect(() => {
-        if (pendingItems.length > 0 || historyItems.length > 0) {
-            const cacheData = {
-                pendingItems,
-                historyItems,
-                timestamp: Date.now()
-            };
-            sessionStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
-        }
-    }, [pendingItems, historyItems]);
+    // Refresh Handler
+    const handleRefresh = useCallback(() => {
+        refresh();
+    }, [refresh]);
 
     // Memoized Filter Options
     const allUniqueClients = useMemo(() =>
@@ -253,14 +237,10 @@ const InformToPartyBeforeDispatch = () => {
         }
     };
 
-    // Manual refresh
-    const handleRefresh = () => {
-        sessionStorage.removeItem(CACHE_KEY);
-        fetchData(true);
-    };
+    // --- Memoized Filter Options ---
 
     return (
-        <div className="p-3 sm:p-6 lg:p-8">
+        <div className="">
             {/* Header */}
             <div className="flex flex-col gap-4 mb-6 bg-white p-4 lg:p-5 rounded shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
                 {/* Top row: title, tabs, actions */}
@@ -291,10 +271,10 @@ const InformToPartyBeforeDispatch = () => {
                     <div className="flex flex-wrap items-center gap-2">
                         <button
                             onClick={handleRefresh}
-                            disabled={isLoading}
+                            disabled={refreshing || isSaving}
                             className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                         >
-                            <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+                            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
                             Refresh
                         </button>
 
@@ -348,8 +328,8 @@ const InformToPartyBeforeDispatch = () => {
                 </div>
             </div>
 
-            {/* Loading overlay */}
-            {isLoading && (
+            {/* Loading overlay — first load or saving (background syncs are silent) */}
+            {(loading || isSaving) && (
                 <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
                     <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
                         <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
