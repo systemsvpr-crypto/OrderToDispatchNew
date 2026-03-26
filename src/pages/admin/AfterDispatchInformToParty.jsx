@@ -58,7 +58,7 @@ const AfterDispatchInformToParty = () => {
   // --- Fetch function for history (from After Dispatch sheet) ---
   const fetchHistory = useCallback(async (signal) => {
     const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'After%20Dispatch');
+    url.searchParams.set('sheet', 'After Dispatch');
     url.searchParams.set('mode', 'table');
     if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
 

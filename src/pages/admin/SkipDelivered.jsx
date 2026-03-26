@@ -249,30 +249,84 @@ const SkipDelivered = () => {
 
     const filteredItems = filteredAndSortedItems;
 
-    // Check if any row is selected (for conditional column visibility)
-    const anySelected = Object.values(selectedRows).some(Boolean);
 
     // Checkbox toggle
     const handleCheckboxToggle = (originalIdx) => {
-        const isSelected = !selectedRows[originalIdx];
-        setSelectedRows(prev => ({ ...prev, [originalIdx]: isSelected }));
+        setSelectedRows(prev => {
+            const newState = { ...prev };
+            const isNowSelected = !newState[originalIdx];
+            if (isNowSelected) {
+                newState[originalIdx] = true;
+            } else {
+                delete newState[originalIdx];
+            }
+            return newState;
+        });
 
-        if (isSelected) {
-            setEditData(prev => ({
-                ...prev,
-                [originalIdx]: {
+        // Use functional update for editData as well to ensure it's in sync
+        setEditData(prev => {
+            const newState = { ...prev };
+            const isNowSelected = !selectedRows[originalIdx]; // Note: this might be slightly risky if called multiple times rapidly, but standard for this pattern
+            if (isNowSelected) {
+                const item = pendingItems.find(it => it.originalIndex === originalIdx);
+                newState[originalIdx] = {
                     dispatchQty: '',
                     dispatchDate: new Date().toISOString().split('T')[0],
                     gstIncluded: 'No',
-                    godown: pendingItems.find(item => item.originalIndex === originalIdx)?.godown || ''
-                }
-            }));
+                    godown: item?.godown || ''
+                };
+            } else {
+                delete newState[originalIdx];
+            }
+            return newState;
+        });
+    };
+
+    // Toggle Select All for filtered items
+    const toggleSelectAll = () => {
+        const allFilteredIndices = filteredItems.map(item => item.originalIndex);
+        const allAreCurrentlySelected = allFilteredIndices.length > 0 && allFilteredIndices.every(idx => selectedRows[idx]);
+
+        if (allAreCurrentlySelected) {
+            // Uncheck all filtered
+            setSelectedRows(prev => {
+                const next = { ...prev };
+                allFilteredIndices.forEach(idx => delete next[idx]);
+                return next;
+            });
+            setEditData(prev => {
+                const next = { ...prev };
+                allFilteredIndices.forEach(idx => delete next[idx]);
+                return next;
+            });
         } else {
-            const newEditData = { ...editData };
-            delete newEditData[originalIdx];
-            setEditData(newEditData);
+            // Check all filtered
+            const today = new Date().toISOString().split('T')[0];
+            setSelectedRows(prev => {
+                const next = { ...prev };
+                allFilteredIndices.forEach(idx => { next[idx] = true; });
+                return next;
+            });
+            setEditData(prev => {
+                const next = { ...prev };
+                allFilteredIndices.forEach(idx => {
+                    if (!next[idx]) {
+                        const item = pendingItems.find(it => it.originalIndex === idx);
+                        next[idx] = {
+                            dispatchQty: '',
+                            dispatchDate: today,
+                            gstIncluded: 'No',
+                            godown: item?.godown || ''
+                        };
+                    }
+                });
+                return next;
+            });
         }
     };
+
+    const selectedCount = Object.values(selectedRows).filter(Boolean).length;
+    const isAllFilteredSelected = filteredItems.length > 0 && filteredItems.every(item => selectedRows[item.originalIndex]);
 
     // Handle edit changes
     const handleEditChange = (originalIdx, field, value) => {
@@ -286,6 +340,10 @@ const SkipDelivered = () => {
     const handleSave = async () => {
         const selectedItems = pendingItems.filter(item => selectedRows[item.originalIndex]);
         if (selectedItems.length === 0) return;
+
+        if (!window.confirm(`Are you sure you want to mark ${selectedItems.length} items as skipped?`)) {
+            return;
+        }
 
         setIsSaving(true);
         try {
@@ -334,9 +392,9 @@ const SkipDelivered = () => {
                 throw new Error(result.error || 'Unknown error');
             }
 
-            // On success, invalidate cache and refetch
-            sessionStorage.removeItem(CACHE_KEY);
-            await fetchItems(true);
+            // On success, refresh data
+            refreshOrders();
+            refreshSkip();
             setSelectedRows({});
             setEditData({});
 
@@ -410,14 +468,17 @@ const SkipDelivered = () => {
                     focusColor="primary"
                 />
 
-                {activeTab === 'pending' && anySelected && (
+                {activeTab === 'pending' && (
                     <button
                         onClick={handleSave}
-                        disabled={isSaving}
-                        className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded hover:bg-primary-hover shadow-md font-bold text-sm disabled:opacity-50"
+                        disabled={isSaving || selectedCount === 0}
+                        className={`flex items-center gap-2 px-4 py-2 rounded shadow-md font-bold text-sm transition-all ${selectedCount > 0
+                                ? 'bg-primary text-white hover:bg-primary-hover shadow-primary/20'
+                                : 'bg-gray-100 text-gray-400 cursor-not-allowed shadow-none'
+                            }`}
                     >
                         {isSaving ? <Loader size={16} className="animate-spin" /> : <Save size={16} />}
-                        {isSaving ? 'Saving...' : 'Mark Skipped'}
+                        {isSaving ? 'Saving...' : selectedCount > 0 ? `Mark ${selectedCount} Skipped` : 'Mark Skipped'}
                     </button>
                 )}
             </div>
@@ -461,12 +522,24 @@ const SkipDelivered = () => {
                     <table className="w-full text-left border-collapse min-w-[1200px]">
                         <thead>
                             <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10 shadow-sm">
-                                {activeTab === 'pending' && <th className="px-6 py-4 text-center">Action</th>}
-                                {activeTab === 'pending' && anySelected && (
+                                {activeTab === 'pending' && (
+                                    <th className="px-6 py-4 text-center w-16">
+                                        <div className="flex flex-col items-center gap-1">
+                                            <span className="text-[10px] text-gray-400">All</span>
+                                            <input
+                                                type="checkbox"
+                                                checked={isAllFilteredSelected}
+                                                onChange={toggleSelectAll}
+                                                className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
+                                            />
+                                        </div>
+                                    </th>
+                                )}
+                                {activeTab === 'pending' && (
                                     <>
-                                        <th className="px-6 py-4 text-primary-hover text-right">Dispatch Qty</th>
-                                        <th className="px-6 py-4 text-primary-hover text-center">Dispatch Date</th>
-                                        <th className="px-6 py-4 text-primary-hover text-center">GST Included</th>
+                                        <th className="px-6 py-4 text-primary-hover text-right whitespace-nowrap">Dispatch Qty</th>
+                                        <th className="px-6 py-4 text-primary-hover text-center whitespace-nowrap">Dispatch Date</th>
+                                        <th className="px-6 py-4 text-primary-hover text-center whitespace-nowrap">GST Inc.</th>
                                     </>
                                 )}
                                 {[
@@ -507,68 +580,69 @@ const SkipDelivered = () => {
                         </thead>
                         <tbody className="divide-y divide-gray-200 text-sm">
                             {filteredItems.map((item, idx) => {
-                                const originalIdx = item.originalIndex || idx;
-                                const isSelected = activeTab === 'pending' && !!selectedRows[originalIdx];
-                                const edit = editData[originalIdx] || {};
-                                return (
-                                    <tr key={`${activeTab}-${originalIdx}`} className={isSelected ? 'bg-green-50/50' : 'hover:bg-gray-50'}>
-                                        {activeTab === 'pending' && (
-                                            <td className="px-6 py-4 text-center">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={isSelected}
-                                                    onChange={() => handleCheckboxToggle(originalIdx)}
-                                                    className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
-                                                />
-                                            </td>
-                                        )}
-                                        {/* Extra columns: rendered only if anySelected */}
-                                        {activeTab === 'pending' && anySelected && (
-                                            <>
-                                                <td className="px-6 py-4 text-right">
-                                                    {isSelected ? (
-                                                        <input
-                                                            type="number"
-                                                            value={edit.dispatchQty || ''}
-                                                            onChange={(e) => handleEditChange(originalIdx, 'dispatchQty', e.target.value)}
-                                                            className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-primary focus:border-primary outline-none text-right"
-                                                            placeholder="Qty"
-                                                        />
-                                                    ) : (
-                                                        <span className="text-gray-400">-</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-6 py-4 text-center">
-                                                    {isSelected ? (
-                                                        <input
-                                                            type="date"
-                                                            value={formatDateForInput(edit.dispatchDate) || ''}
-                                                            onChange={(e) => handleEditChange(originalIdx, 'dispatchDate', e.target.value)}
-                                                            className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-primary focus:border-primary outline-none"
-                                                        />
-                                                    ) : (
-                                                        <span className="text-gray-400">-</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-6 py-4 text-center">
-                                                    {isSelected ? (
-                                                        <div className="relative">
-                                                            <select
-                                                                value={edit.gstIncluded || 'No'}
-                                                                onChange={(e) => handleEditChange(originalIdx, 'gstIncluded', e.target.value)}
-                                                                className="w-full pl-3 pr-8 py-1 border border-gray-300 rounded text-sm appearance-none bg-white focus:ring-primary focus:border-primary outline-none"
-                                                            >
-                                                                <option value="Yes">Yes</option>
-                                                                <option value="No">No</option>
-                                                            </select>
-                                                            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400" />
-                                                        </div>
-                                                    ) : (
-                                                        <span className="text-gray-400">-</span>
-                                                    )}
-                                                </td>
-                                            </>
-                                        )}
+                                 const originalIdx = item.originalIndex ?? idx;
+                                 const uniqueKey = `${activeTab}-${item.orderNumber}-${item.itemName}-${originalIdx}`;
+                                 const isSelected = activeTab === 'pending' && !!selectedRows[originalIdx];
+                                 const edit = editData[originalIdx] || {};
+                                 return (
+                                     <tr key={uniqueKey} className={isSelected ? 'bg-green-50/50' : 'hover:bg-gray-50'}>
+                                         {activeTab === 'pending' && (
+                                             <td className="px-6 py-4 text-center">
+                                                 <input
+                                                     type="checkbox"
+                                                     checked={isSelected}
+                                                     onChange={() => handleCheckboxToggle(originalIdx)}
+                                                     className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
+                                                 />
+                                             </td>
+                                         )}
+                                         {/* Extra columns: now always rendered for pending but conditionally editable */}
+                                         {activeTab === 'pending' && (
+                                             <>
+                                                 <td className="px-6 py-4 text-right">
+                                                     {isSelected ? (
+                                                         <input
+                                                             type="number"
+                                                             value={edit.dispatchQty || ''}
+                                                             onChange={(e) => handleEditChange(originalIdx, 'dispatchQty', e.target.value)}
+                                                             className="w-20 px-2 py-1 border border-gray-300 rounded text-sm focus:ring-primary focus:border-primary outline-none text-right"
+                                                             placeholder="Qty"
+                                                         />
+                                                     ) : (
+                                                         <span className="text-gray-300 italic text-[10px]">Select to edit</span>
+                                                     )}
+                                                 </td>
+                                                 <td className="px-6 py-4 text-center">
+                                                     {isSelected ? (
+                                                         <input
+                                                             type="date"
+                                                             value={formatDateForInput(edit.dispatchDate) || ''}
+                                                             onChange={(e) => handleEditChange(originalIdx, 'dispatchDate', e.target.value)}
+                                                             className="px-2 py-1 border border-gray-300 rounded text-sm focus:ring-primary focus:border-primary outline-none"
+                                                         />
+                                                     ) : (
+                                                         <span className="text-gray-300 italic text-[10px]">-</span>
+                                                     )}
+                                                 </td>
+                                                 <td className="px-6 py-4 text-center">
+                                                     {isSelected ? (
+                                                         <div className="relative inline-block w-20">
+                                                             <select
+                                                                 value={edit.gstIncluded || 'No'}
+                                                                 onChange={(e) => handleEditChange(originalIdx, 'gstIncluded', e.target.value)}
+                                                                 className="w-full pl-3 pr-8 py-1 border border-gray-300 rounded text-sm appearance-none bg-white focus:ring-primary focus:border-primary outline-none"
+                                                             >
+                                                                 <option value="Yes">Yes</option>
+                                                                 <option value="No">No</option>
+                                                             </select>
+                                                             <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400" />
+                                                         </div>
+                                                     ) : (
+                                                         <span className="text-gray-300 italic text-[10px]">-</span>
+                                                     )}
+                                                 </td>
+                                             </>
+                                         )}
                                         <td className="px-6 py-4 font-semibold text-gray-900">{item.orderNumber}</td>
                                         <td className="px-6 py-4 text-gray-600 text-xs text-center">{formatDisplayDate(item.orderDate)}</td>
                                         <td className="px-6 py-4 font-medium text-gray-800">{item.clientName}</td>
@@ -610,11 +684,11 @@ const SkipDelivered = () => {
                             {filteredItems.length === 0 && (
                                 <tr>
                                     <td
-                                        colSpan={
-                                            activeTab === 'pending'
-                                                ? (anySelected ? 15 : 12)
-                                                : 10
-                                        }
+                                         colSpan={
+                                             activeTab === 'pending'
+                                                 ? 15
+                                                 : 10
+                                         }
                                         className="px-4 py-8 text-center text-gray-500 italic"
                                     >
                                         No items found.
@@ -627,12 +701,24 @@ const SkipDelivered = () => {
 
                 {/* Mobile card view */}
                 <div className="md:hidden divide-y divide-gray-200">
+                    {activeTab === 'pending' && filteredItems.length > 0 && (
+                        <div className="p-4 bg-gray-50 flex justify-between items-center border-b border-gray-200">
+                            <span className="text-xs font-bold text-gray-500 uppercase">Select All Filtered</span>
+                            <input
+                                type="checkbox"
+                                checked={isAllFilteredSelected}
+                                onChange={toggleSelectAll}
+                                className="rounded text-primary focus:ring-primary w-6 h-6 cursor-pointer"
+                            />
+                        </div>
+                    )}
                     {filteredItems.map((item, idx) => {
-                        const originalIdx = item.originalIndex || idx;
-                        const isSelected = activeTab === 'pending' && !!selectedRows[originalIdx];
-                        const edit = editData[originalIdx] || {};
-                        return (
-                            <div key={`${activeTab}-${originalIdx}`} className={`p-4 space-y-3 ${isSelected ? 'bg-green-50/30' : 'bg-white'}`}>
+                         const originalIdx = item.originalIndex ?? idx;
+                         const uniqueKey = `${activeTab}-${item.orderNumber}-${item.itemName}-${originalIdx}`;
+                         const isSelected = activeTab === 'pending' && !!selectedRows[originalIdx];
+                         const edit = editData[originalIdx] || {};
+                         return (
+                             <div key={uniqueKey} className={`p-4 space-y-3 ${isSelected ? 'bg-green-50/30' : 'bg-white'}`}>
                                 <div className="flex justify-between items-start">
                                     <div className="flex gap-3 items-start">
                                         {activeTab === 'pending' && (

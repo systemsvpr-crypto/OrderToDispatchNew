@@ -149,7 +149,7 @@ const DispatchComplete = () => {
   // --- Fetch history from Dispatch Completed sheet ---
   const fetchHistory = useCallback(async (signal) => {
     const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'Dispatch%20Completed');
+    url.searchParams.set('sheet', 'Dispatch Completed');
     url.searchParams.set('mode', 'table');
     if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
 
@@ -167,8 +167,9 @@ const DispatchComplete = () => {
     if (!dataArray.length) return [];
 
     const hasHeaders = Array.isArray(dataArray[0]) &&
-      (String(dataArray[0][0]).toLowerCase().includes('planning') ||
-       String(dataArray[0][1]).toLowerCase().includes('dispatch'));
+      (String(dataArray[0][0]).toLowerCase().includes('planning') || 
+       String(dataArray[0][1]).toLowerCase().includes('dispatch') ||
+       String(dataArray[0][0]).toLowerCase().includes('dispatch'));
 
     const processArray = hasHeaders ? dataArray.slice(1) : dataArray;
     return processArray.map((item, idx) => {

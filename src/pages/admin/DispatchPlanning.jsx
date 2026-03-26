@@ -127,7 +127,7 @@ const DispatchPlanning = () => {
     setEditData({});
   }, [activeTab]);
 
-  // Get unique values for filters - Memoized
+  // Get unique values for filters - Memoized (unchanged)
   const allUniqueClients = useMemo(
     () => [...new Set([...(orders || []).map(o => o.clientName), ...(dispatchHistory || []).map(h => h.clientName)])].sort(),
     [orders, dispatchHistory]
@@ -236,15 +236,18 @@ const DispatchPlanning = () => {
     return getSortedItems(filtered);
   }, [dispatchHistory, searchTerm, clientFilter, godownFilter, orderNoFilter, itemFilter, dateFilter, getSortedItems]);
 
-  // Handlers (unchanged)
-  const handleCheckboxToggle = useCallback((idx, order) => {
+  // ========== FIX: Use unique key including originalIndex ==========
+  const getRowKey = useCallback((order) => `${order.orderNo}_${order.itemName}_${order.originalIndex}`, []);
+
+  const handleCheckboxToggle = useCallback((order) => {
+    const key = getRowKey(order);
     setSelectedRows(prev => {
-      const isSelected = !prev[idx];
-      const next = { ...prev, [idx]: isSelected };
+      const isSelected = !prev[key];
+      const next = { ...prev, [key]: isSelected };
       if (isSelected) {
         setEditData(prevEdit => ({
           ...prevEdit,
-          [idx]: {
+          [key]: {
             dispatchQty: order.qty,
             dispatchDate: new Date().toISOString().split('T')[0],
             gstIncluded: 'Yes',
@@ -254,28 +257,29 @@ const DispatchPlanning = () => {
       } else {
         setEditData(prevEdit => {
           const newEditData = { ...prevEdit };
-          delete newEditData[idx];
+          delete newEditData[key];
           return newEditData;
         });
       }
       return next;
     });
-  }, []);
+  }, [getRowKey]);
 
-  const handleEditChange = useCallback((idx, field, value) => {
+  const handleEditChange = useCallback((key, field, value) => {
     setEditData(prev => ({
       ...prev,
-      [idx]: { ...prev[idx], [field]: value }
+      [key]: { ...prev[key], [field]: value }
     }));
   }, []);
 
   const handleSave = useCallback(async () => {
     const rowsToSubmit = [];
 
-    Object.keys(selectedRows).forEach((idx) => {
-      if (selectedRows[idx]) {
-        const order = orders?.find(o => String(o.originalIndex) === String(idx));
-        const planningData = editData[idx];
+    Object.keys(selectedRows).forEach((key) => {
+      if (selectedRows[key]) {
+        // Find order by unique key
+        const order = orders?.find(o => getRowKey(o) === key);
+        const planningData = editData[key];
         if (order && planningData) {
           rowsToSubmit.push({
             ...order,
@@ -321,7 +325,7 @@ const DispatchPlanning = () => {
     } finally {
       setIsSaving(false);
     }
-  }, [selectedRows, orders, editData, refreshOrders, refreshHistory, showToast, API_URL, SHEET_ID]);
+  }, [selectedRows, orders, editData, refreshOrders, refreshHistory, showToast, API_URL, SHEET_ID, getRowKey]);
 
   // Manual refresh
   const handleRefresh = useCallback(() => {
@@ -348,6 +352,7 @@ const DispatchPlanning = () => {
 
   const isAnySelected = Object.values(selectedRows).some(Boolean);
 
+  // ========== JSX (only selection key updated) ==========
   return (
     <div className="">
       {/* Header Row with Title, Tabs, Filters, and Actions */}
@@ -415,7 +420,7 @@ const DispatchPlanning = () => {
           </div>
         </div>
 
-        {/* Filters */}
+        {/* Filters (unchanged) */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
           <input
             type="text"
@@ -473,7 +478,7 @@ const DispatchPlanning = () => {
         </div>
       </div>
 
-      {/* Loading Overlay - first load only (background syncs are silent) */}
+      {/* Loading Overlay (unchanged) */}
       {isLoading && (
         <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
           <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
@@ -559,29 +564,29 @@ const DispatchPlanning = () => {
                     <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-right" onClick={() => requestSort('qtyDelivered')}>
                       <div className="flex items-center gap-1 justify-end">Qty Delivered <SortIcon column="qtyDelivered" sortConfig={sortConfig} /></div>
                     </th>
-                  </tr>
+                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 text-sm">
                   {filteredAndSortedOrders.map((order) => {
-                    const realIdx = order.originalIndex;
+                    const key = getRowKey(order);
                     return (
-                      <tr key={`${order.orderNo}-${realIdx}`} className={`${selectedRows[realIdx] ? 'bg-green-50/50' : 'hover:bg-gray-50'} transition-colors`}>
+                      <tr key={key} className={`${selectedRows[key] ? 'bg-green-50/50' : 'hover:bg-gray-50'} transition-colors`}>
                         <td className="px-6 py-4 text-center">
                           <input
                             type="checkbox"
-                            checked={!!selectedRows[realIdx]}
-                            onChange={() => handleCheckboxToggle(realIdx, order)}
+                            checked={!!selectedRows[key]}
+                            onChange={() => handleCheckboxToggle(order)}
                             className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
                           />
                         </td>
                         {isAnySelected && (
                           <>
                             <td className="px-6 py-4 animate-column text-right">
-                              {selectedRows[realIdx] ? (
+                              {selectedRows[key] ? (
                                 <input
                                   type="number"
-                                  value={editData[realIdx]?.dispatchQty || ''}
-                                  onChange={(e) => handleEditChange(realIdx, 'dispatchQty', e.target.value)}
+                                  value={editData[key]?.dispatchQty || ''}
+                                  onChange={(e) => handleEditChange(key, 'dispatchQty', e.target.value)}
                                   className="w-20 px-2 py-1 border rounded text-xs outline-none focus:border-primary text-right"
                                 />
                               ) : (
@@ -589,11 +594,11 @@ const DispatchPlanning = () => {
                               )}
                             </td>
                             <td className="px-6 py-4 animate-column text-center">
-                              {selectedRows[realIdx] ? (
+                              {selectedRows[key] ? (
                                 <input
                                   type="date"
-                                  value={editData[realIdx]?.dispatchDate || ''}
-                                  onChange={(e) => handleEditChange(realIdx, 'dispatchDate', e.target.value)}
+                                  value={editData[key]?.dispatchDate || ''}
+                                  onChange={(e) => handleEditChange(key, 'dispatchDate', e.target.value)}
                                   className="px-2 py-1 border rounded text-xs outline-none focus:border-primary"
                                 />
                               ) : (
@@ -601,10 +606,10 @@ const DispatchPlanning = () => {
                               )}
                             </td>
                             <td className="px-6 py-4 animate-column text-center">
-                              {selectedRows[realIdx] ? (
+                              {selectedRows[key] ? (
                                 <select
-                                  value={editData[realIdx]?.gstIncluded || ''}
-                                  onChange={(e) => handleEditChange(realIdx, 'gstIncluded', e.target.value)}
+                                  value={editData[key]?.gstIncluded || ''}
+                                  onChange={(e) => handleEditChange(key, 'gstIncluded', e.target.value)}
                                   className="px-2 py-1 border rounded text-xs outline-none focus:border-primary"
                                 >
                                   <option value="Yes">Yes</option>
@@ -615,10 +620,10 @@ const DispatchPlanning = () => {
                               )}
                             </td>
                             <td className="px-6 py-4 animate-column text-center">
-                              {selectedRows[realIdx] ? (
+                              {selectedRows[key] ? (
                                 <select
-                                  value={editData[realIdx]?.godownName || order.godownName}
-                                  onChange={(e) => handleEditChange(realIdx, 'godownName', e.target.value)}
+                                  value={editData[key]?.godownName || order.godownName}
+                                  onChange={(e) => handleEditChange(key, 'godownName', e.target.value)}
                                   className="px-2 py-1 border rounded text-xs outline-none focus:border-primary w-full"
                                 >
                                   {[...new Set([...GODOWNS, order.godownName])].map(g => (
@@ -653,22 +658,21 @@ const DispatchPlanning = () => {
                   )}
                 </tbody>
               </table>
-              {/* Scroll hint gradient (optional) */}
               <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-gray-100 to-transparent pointer-events-none opacity-30"></div>
             </div>
 
-            {/* Mobile Card View (unchanged) */}
+            {/* Mobile Card View (keys updated) */}
             <div className="md:hidden divide-y divide-gray-200">
               {filteredAndSortedOrders.map((order) => {
-                const realIdx = order.originalIndex;
+                const key = getRowKey(order);
                 return (
-                  <div key={`${order.orderNo}-${realIdx}`} className={`p-4 space-y-4 ${selectedRows[realIdx] ? 'bg-green-50/30' : 'bg-white'}`}>
+                  <div key={key} className={`p-4 space-y-4 ${selectedRows[key] ? 'bg-green-50/30' : 'bg-white'}`}>
                     <div className="flex justify-between items-start">
                       <div className="flex items-start gap-3">
                         <input
                           type="checkbox"
-                          checked={!!selectedRows[realIdx]}
-                          onChange={() => handleCheckboxToggle(realIdx, order)}
+                          checked={!!selectedRows[key]}
+                          onChange={() => handleCheckboxToggle(order)}
                           className="mt-1 rounded text-primary focus:ring-primary w-5 h-5"
                         />
                         <div>
@@ -678,14 +682,14 @@ const DispatchPlanning = () => {
                       </div>
                     </div>
 
-                    {selectedRows[realIdx] && (
+                    {selectedRows[key] && (
                       <div className="grid grid-cols-2 gap-3 bg-green-50/50 p-3 rounded border border-green-100">
                         <div className="col-span-2">
                           <label className="block text-[10px] font-bold text-primary mb-1 uppercase">Dispatch Date</label>
                           <input
                             type="date"
-                            value={editData[realIdx]?.dispatchDate || ''}
-                            onChange={(e) => handleEditChange(realIdx, 'dispatchDate', e.target.value)}
+                            value={editData[key]?.dispatchDate || ''}
+                            onChange={(e) => handleEditChange(key, 'dispatchDate', e.target.value)}
                             className="w-full px-3 py-1.5 border border-green-200 rounded text-xs outline-none focus:border-primary bg-white"
                           />
                         </div>
@@ -693,16 +697,16 @@ const DispatchPlanning = () => {
                           <label className="block text-[10px] font-bold text-primary mb-1 uppercase">Disp Qty</label>
                           <input
                             type="number"
-                            value={editData[realIdx]?.dispatchQty || ''}
-                            onChange={(e) => handleEditChange(realIdx, 'dispatchQty', e.target.value)}
+                            value={editData[key]?.dispatchQty || ''}
+                            onChange={(e) => handleEditChange(key, 'dispatchQty', e.target.value)}
                             className="w-full px-3 py-1.5 border border-green-200 rounded text-xs outline-none focus:border-primary bg-white"
                           />
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-primary mb-1 uppercase">GST</label>
                           <select
-                            value={editData[realIdx]?.gstIncluded || ''}
-                            onChange={(e) => handleEditChange(realIdx, 'gstIncluded', e.target.value)}
+                            value={editData[key]?.gstIncluded || ''}
+                            onChange={(e) => handleEditChange(key, 'gstIncluded', e.target.value)}
                             className="w-full px-3 py-1.5 border border-green-200 rounded text-xs outline-none focus:border-primary bg-white"
                           >
                             <option value="Yes">Yes</option>
@@ -712,8 +716,8 @@ const DispatchPlanning = () => {
                         <div className="col-span-2">
                           <label className="block text-[10px] font-bold text-primary mb-1 uppercase">Godown Name</label>
                           <select
-                            value={editData[realIdx]?.godownName || order.godownName}
-                            onChange={(e) => handleEditChange(realIdx, 'godownName', e.target.value)}
+                            value={editData[key]?.godownName || order.godownName}
+                            onChange={(e) => handleEditChange(key, 'godownName', e.target.value)}
                             className="w-full px-3 py-1.5 border border-green-200 rounded text-xs outline-none focus:border-primary bg-white"
                           >
                             {[...new Set([...GODOWNS, order.godownName])].map(g => (
@@ -767,7 +771,7 @@ const DispatchPlanning = () => {
             </div>
           </>
         ) : (
-          // History tab
+          // History tab (unchanged)
           <>
             <div className="hidden md:block relative overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 max-h-[460px] overflow-y-auto">
               <table className="w-full text-left border-collapse min-w-[1200px] mx-0">
@@ -820,7 +824,6 @@ const DispatchPlanning = () => {
                   )}
                 </tbody>
               </table>
-              {/* Scroll hint gradient (optional) */}
               <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-gray-100 to-transparent pointer-events-none opacity-30"></div>
             </div>
             <div className="md:hidden divide-y divide-gray-200">

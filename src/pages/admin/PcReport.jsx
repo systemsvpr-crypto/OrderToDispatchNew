@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { X, Loader, Save, RefreshCcw, ChevronUp, ChevronDown } from 'lucide-react';
+import { useDataSync } from '../../utils/useDataSync';
 import { useToast } from '../../contexts/ToastContext';
 
 const CACHE_KEY = 'pcReportData';
@@ -7,7 +8,6 @@ const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const PcReport = () => {
     const [items, setItems] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [modalOpen, setModalOpen] = useState(false);
@@ -50,20 +50,6 @@ const PcReport = () => {
         } catch { return dateStr; }
     };
 
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
-        try {
-            const { items, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_DURATION) return items;
-        } catch (e) { /* ignore */ }
-        return null;
-    }, []);
-
-    const saveToCache = useCallback((itemsData) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ items: itemsData, timestamp: Date.now() }));
-    }, []);
 
     // Stable Fetcher
     const fetchData = useCallback(async () => {
@@ -92,34 +78,22 @@ const PcReport = () => {
         }
     }, [API_URL, SHEET_ID]);
 
-    const loadData = useCallback(async (force = false) => {
-        setIsLoading(true);
-        if (!force) {
-            const cached = loadFromCache();
-            if (cached) {
-                setItems(cached);
-                setIsLoading(false);
-                return;
-            }
-        }
-        const freshData = await fetchData();
-        setItems(freshData);
-        setIsLoading(false);
-    }, [fetchData, loadFromCache]);
 
-    // Initial load
-    useEffect(() => { loadData(); }, [loadData]);
+    const {
+        data: fetchedItems,
+        loading: isLoading,
+        refreshing: isRefreshing,
+        refresh: refreshData
+    } = useDataSync('PC Report', fetchData, CACHE_KEY, CACHE_DURATION);
 
-    // Automated Cache Sync
     useEffect(() => {
-        if (items.length > 0) saveToCache(items);
-    }, [items, saveToCache]);
+        if (fetchedItems) setItems(fetchedItems);
+    }, [fetchedItems]);
 
     // Refresh Handler
     const handleRefresh = useCallback(() => {
-        sessionStorage.removeItem(CACHE_KEY);
-        loadData(true);
-    }, [loadData]);
+        refreshData();
+    }, [refreshData]);
 
     // Sorting logic
     const requestSort = useCallback((key) => {
@@ -205,9 +179,12 @@ const PcReport = () => {
             const result = await response.json();
             if (!result.success) throw new Error(result.error || 'Unknown error');
 
-            sessionStorage.removeItem(CACHE_KEY);
             showToast('Update submitted successfully.', 'success');
-            await loadData(true);
+            
+            // Add a small delay to allow Google Sheets to update formulas
+            await new Promise(r => setTimeout(r, 1500));
+            
+            await refreshData();
             setModalOpen(false);
         } catch (error) {
             console.error('Submit error:', error);
@@ -215,7 +192,7 @@ const PcReport = () => {
         } finally {
             setIsSaving(false);
         }
-    }, [currentItem, formData, API_URL, SHEET_ID, loadData]);
+    }, [currentItem, formData, API_URL, SHEET_ID, refreshData]);
 
     return (
         <div className="">

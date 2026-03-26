@@ -190,7 +190,7 @@ const InformToPartyBeforeDispatch = () => {
 
         if (selectedDNs.length === 0) return;
 
-        setIsLoading(true);
+        setIsSaving(true);
         const now = new Date().toISOString();
 
         selectedDNs.forEach(dn => {
@@ -233,7 +233,7 @@ const InformToPartyBeforeDispatch = () => {
             console.error('Submission failed:', error);
             showToast('Failed to submit confirmation. Please check console.', 'error');
         } finally {
-            setIsLoading(false);
+            setIsSaving(false);
         }
     };
 
