@@ -1,12 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, X, Save, ChevronUp, ChevronDown, RefreshCw, Search } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Plus, X, Save, ChevronUp, ChevronDown, RefreshCw, Search, CheckCircle } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
 import SearchableDropdown from '../../components/SearchableDropdown';
-import { useDataSync } from '../../utils/useDataSync';
-
-const CACHE_KEY = 'orderData';
-const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 const Order = () => {
   const { showToast } = useToast();
@@ -22,6 +18,9 @@ const Order = () => {
   const [itemNames, setItemNames] = useState([]);
   const [clients, setClients] = useState([]);
   const [godowns, setGodowns] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [clientFilter, setClientFilter] = useState('');
@@ -29,70 +28,93 @@ const Order = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
   const MASTER_URL = import.meta.env.VITE_MASTER_URL;
   const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
 
-  // --- Fetch function for useDataSync ---
-  const fetchOrdersData = useCallback(async (signal) => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'ORDER');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+  // Abort controller for ongoing fetch
+  const abortControllerRef = useRef(null);
 
-    const response = await fetch(url.toString(), { signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const result = await response.json();
+  // --- Fetch orders from Google Sheets ---
+  const fetchOrdersData = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setIsRefreshingOrders(true);
+    else setIsLoadingOrders(true);
 
-    if (!result.success) throw new Error(result.error || 'Unknown error');
-
-    let dataArray = result.data;
-    if (!Array.isArray(dataArray)) dataArray = [];
-
-    if (dataArray.length === 0) return [];
-
-    const isArrayData = Array.isArray(dataArray[0]);
-    const dataToMap = dataArray.slice(5);
-
-    let mappedOrders;
-    if (isArrayData) {
-      mappedOrders = dataToMap.map(item => ({
-        orderNumber: item[1] || '-',
-        orderDate: item[2] || '-',
-        clientName: item[3] || '-',
-        godownName: item[4] || '-',
-        itemName: item[5] || '-',
-        rate: item[6] || '0',
-        qty: item[7] || '0',
-        currentStock: item[8] || '-',
-        intransitQty: item[9] || '-',
-        createdBy: item[24] || '-'
-      }));
-    } else {
-      mappedOrders = dataToMap.map(item => ({
-        orderNumber: item.orderNumber || '-',
-        orderDate: item.orderDate || '-',
-        clientName: item.clientName || '-',
-        godownName: item.godownName || '-',
-        itemName: item.itemName || '-',
-        rate: item.rate || '0',
-        qty: item.qty || '0',
-        currentStock: item.currentStock || '-',
-        intransitQty: item.intransitQty || '-',
-        createdBy: item.createdBy || '-'
-      }));
+    // Cancel legacy controller
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
-    return mappedOrders;
-  }, [API_URL, SHEET_ID]);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
-  // --- Use the sync hook ---
-  const { data: orders, loading: isLoadingOrders, refreshing: isRefreshingOrders, refresh: refreshOrders } = useDataSync(
-    'ORDER',
-    fetchOrdersData,
-    CACHE_KEY,
-    CACHE_DURATION
-  );
+    try {
+      const url = new URL(API_URL);
+      url.searchParams.set('sheet', 'ORDER');
+      url.searchParams.set('mode', 'table');
+      if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+
+      const response = await fetch(url.toString(), { signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const result = await response.json();
+
+      if (!result.success) throw new Error(result.error || 'Unknown error');
+
+      let dataArray = result.data;
+      if (!Array.isArray(dataArray)) dataArray = [];
+
+      if (dataArray.length === 0) {
+        setOrders([]);
+        return;
+      }
+
+      const isArrayData = Array.isArray(dataArray[0]);
+      const dataToMap = dataArray.slice(5);
+
+      let mappedOrders;
+      if (isArrayData) {
+        mappedOrders = dataToMap.map(item => ({
+          orderNumber: item[1] || '-',
+          orderDate: item[2] || '-',
+          clientName: item[3] || '-',
+          godownName: item[4] || '-',
+          itemName: item[5] || '-',
+          rate: item[6] || '0',
+          qty: item[7] || '0',
+          currentStock: item[8] || '-',
+          intransitQty: item[9] || '-',
+          createdBy: item[24] || '-'
+        }));
+      } else {
+        mappedOrders = dataToMap.map(item => ({
+          orderNumber: item.orderNumber || '-',
+          orderDate: item.orderDate || '-',
+          clientName: item.clientName || '-',
+          godownName: item.godownName || '-',
+          itemName: item.itemName || '-',
+          rate: item.rate || '0',
+          qty: item.qty || '0',
+          currentStock: item.currentStock || '-',
+          intransitQty: item.intransitQty || '-',
+          createdBy: item.createdBy || '-'
+        }));
+      }
+
+      setOrders(mappedOrders);
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        console.error('fetchOrdersData error:', error);
+        showToast('Error', 'Failed to load orders: ' + error.message);
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setIsLoadingOrders(false);
+        setIsRefreshingOrders(false);
+        setInitialLoading(false);
+      }
+    }
+  }, [API_URL, SHEET_ID, showToast]);
 
   // --- Fetch master data (clients, godowns, items) ---
   const fetchMasterData = useCallback(async () => {
@@ -134,10 +156,23 @@ const Order = () => {
     }
   }, [MASTER_URL, showToast]);
 
-  // --- Initial load of master data (no cache needed for now) ---
-  React.useEffect(() => {
+  // --- Initial data loads ---
+  useEffect(() => {
+    fetchOrdersData();
     fetchMasterData();
-  }, [fetchMasterData]);
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [fetchOrdersData, fetchMasterData]);
+
+  // --- Manual refresh ---
+  const handleRefresh = useCallback(() => {
+    fetchOrdersData(true);
+    fetchMasterData();
+  }, [fetchOrdersData, fetchMasterData]);
 
   // --- Format date for display ---
   const formatDisplayDate = (dateStr) => {
@@ -256,6 +291,7 @@ const Order = () => {
         }))
       };
 
+      // Use POST with mode: 'no-cors' as in original
       await fetch(API_URL, {
         method: 'POST',
         mode: 'no-cors',
@@ -272,9 +308,8 @@ const Order = () => {
       });
       setIsModalOpen(false);
 
-      // Invalidate cache and refresh orders via the hook
-      sessionStorage.removeItem(CACHE_KEY);
-      await refreshOrders();
+      // Refresh orders after successful submission
+      await fetchOrdersData(true);
       setTimeout(() => setShowSuccessOverlay(false), 2500);
     } catch (error) {
       console.error('Submit error:', error);
@@ -284,119 +319,198 @@ const Order = () => {
     }
   };
 
-  // --- Manual refresh button handler ---
-  const handleRefresh = useCallback(() => {
-    sessionStorage.removeItem(CACHE_KEY);
-    refreshOrders();
-    fetchMasterData();
-  }, [refreshOrders, fetchMasterData]);
+  // --- Components ---
+  const TableSkeleton = () => (
+    <>
+      {[...Array(6)].map((_, i) => (
+        <tr key={i} className="border-b border-gray-100 last:border-0 relative overflow-hidden">
+          <td className="px-6 py-4">
+            <div className="h-4 w-24 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+          <td className="px-6 py-4">
+            <div className="h-4 w-20 bg-gray-50 rounded-lg mx-auto relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+          <td className="px-6 py-4">
+            <div className="h-4 w-32 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+          <td className="px-6 py-4">
+            <div className="h-4 w-24 bg-gray-50 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+          <td className="px-6 py-4">
+            <div className="h-4 w-40 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+          <td className="px-6 py-4">
+            <div className="h-4 w-12 bg-gray-50 rounded-lg ml-auto relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+          <td className="px-6 py-4">
+            <div className="h-4 w-10 bg-gray-100 rounded-lg ml-auto relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+          <td className="px-6 py-4">
+            <div className="h-4 w-16 bg-gray-50 rounded-lg ml-auto relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+          <td className="px-6 py-4">
+            <div className="h-4 w-16 bg-gray-100 rounded-lg ml-auto relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+          <td className="px-6 py-4">
+            <div className="h-4 w-24 bg-gray-50 rounded-lg mx-auto relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+
+  const MobileSkeleton = () => (
+    <div className="md:hidden divide-y divide-gray-100">
+      {[...Array(4)].map((_, i) => (
+        <div key={i} className="p-6 space-y-4 relative overflow-hidden">
+          <div className="flex justify-between items-center">
+            <div className="h-5 w-40 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+            <div className="h-4 w-16 bg-primary/5 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="h-2 w-10 bg-gray-50 rounded"></div>
+              <div className="h-4 w-24 bg-gray-100 rounded-lg relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="h-2 w-10 bg-gray-50 rounded"></div>
+              <div className="h-4 w-20 bg-gray-100 rounded-lg relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+              </div>
+            </div>
+            <div className="col-span-2 space-y-2">
+              <div className="h-2 w-10 bg-gray-50 rounded"></div>
+              <div className="h-4 w-full bg-gray-100 rounded-lg relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   // --- Render ---
   return (
     <div className="">
       {/* Header Section */}
-      <div className="max-w-[1200px] mx-auto bg-white p-4 sm:p-8 rounded shadow-sm border border-gray-100">
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="bg-primary/10 rounded-xl">
-                <Save className="text-primary w-6 h-6" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-black text-gray-900 tracking-tight">Orders</h1>
-                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-0.5">Manage Dispatch Orders</p>
-              </div>
+      <div className="flex flex-col gap-4 mb-6 bg-white p-4 lg:p-5 rounded shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <h1 className="text-xl font-bold text-gray-800 tracking-tight">Orders</h1>
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Manage Dispatch Orders</p>
+          </div>
+        </div>
+
+        {/* Filters and Actions */}
+        <div className="flex flex-col lg:flex-row justify-between gap-4 lg:items-start">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1 w-full">
+            <input
+              type="text"
+              placeholder="Search by Client, Godown or Order Number..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full h-[42px] px-3 py-2 bg-gray-50 border border-gray-200 rounded focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm transition-all"
+            />
+            <div className="h-[42px]">
+              <SearchableDropdown
+                value={clientFilter}
+                onChange={setClientFilter}
+                options={filterClients}
+                allLabel="All Clients"
+                className="w-full h-full"
+                focusColor="primary"
+              />
             </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleRefresh}
-                disabled={isRefreshingOrders}
-                className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 text-gray-600 rounded-xl hover:bg-gray-100 transition-all border border-gray-200 disabled:opacity-50 text-[10px] font-black uppercase tracking-widest"
-              >
-                <RefreshCw size={16} className={isRefreshingOrders ? 'animate-spin' : ''} />
-                <span className="hidden sm:inline">Refresh</span>
-              </button>
-
-              <button
-                onClick={() => setIsModalOpen(true)}
-                className="flex items-center justify-center gap-2 px-6 py-2 bg-primary text-white rounded-xl hover:bg-primary-hover shadow-lg shadow-primary/20 font-black text-[10px] uppercase tracking-widest transition-all active:scale-95"
-              >
-                <Plus size={16} className="stroke-[3]" />
-                New Order
-              </button>
+            <div className="h-[42px]">
+              <SearchableDropdown
+                value={godownFilter}
+                onChange={setGodownFilter}
+                options={filterGodowns}
+                allLabel="All Godowns"
+                className="w-full h-full"
+                focusColor="primary"
+              />
             </div>
           </div>
 
-          {/* Filters */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center border-t border-gray-50">
-            <div className="md:col-span-2 relative">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by Client, Godown or Order Number..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-11 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/10 focus:border-primary focus:bg-white outline-none transition-all text-sm font-medium"
-              />
-            </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Refresh button */}
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshingOrders}
+              className="flex items-center justify-center gap-1.5 px-4 h-[42px] bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm font-bold border border-gray-200 disabled:opacity-50"
+            >
+              <RefreshCw size={15} className={isRefreshingOrders ? 'animate-spin' : ''} />
+              Refresh
+            </button>
 
-            <SearchableDropdown
-              value={clientFilter}
-              onChange={setClientFilter}
-              options={filterClients}
-              allLabel="All Clients"
-              className="w-full"
-            />
+            {(searchTerm || clientFilter || godownFilter) && (
+              <button
+                onClick={() => { setSearchTerm(''); setClientFilter(''); setGodownFilter(''); }}
+                className="flex items-center justify-center gap-1.5 px-4 h-[42px] bg-green-50 text-primary rounded hover:bg-green-100 transition-colors text-sm font-bold border border-green-100"
+              >
+                <X size={15} />
+                Clear
+              </button>
+            )}
 
-            <SearchableDropdown
-              value={godownFilter}
-              onChange={setGodownFilter}
-              options={filterGodowns}
-              allLabel="All Godowns"
-              className="w-full"
-            />
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center justify-center gap-2 px-5 h-[42px] bg-primary text-white rounded shadow-md shadow-primary/20 hover:bg-primary-hover font-bold text-sm transition-all flex-1 sm:flex-none ml-auto sm:ml-0"
+            >
+              <Plus size={16} className="stroke-[3]" />
+              New Order
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Loading overlay - first load only (background syncs are silent) */}
-      {isLoadingOrders && (
-        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
-          <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
-            <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-            <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-            <div className="relative">
-              <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
-                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
-                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
-              </div>
-            </div>
-            <div className="flex flex-col items-center text-center">
-              <h3 className="text-lg font-black text-gray-800 uppercase tracking-widest mb-1 drop-shadow-sm flex items-center">
-                Loading...
-              </h3>
-              <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
-                Loading Orders...
-              </p>
-            </div>
-          </div>
+      {/* Subtle Progress Bar when refreshing */}
+      {(isLoadingOrders || isRefreshingOrders) && !initialLoading && (
+        <div className="fixed top-0 left-0 w-full h-1 z-[101] bg-gray-100 overflow-hidden">
+          <div className="h-full bg-primary animate-progress-loading shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
         </div>
       )}
 
       {/* Success overlay */}
       {showSuccessOverlay && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 backdrop-blur-sm">
-          <div className="bg-white p-8 rounded shadow-2xl flex flex-col items-center gap-4 animate-fade-in-up">
-            <div className="h-20 w-20 bg-green-50 rounded flex items-center justify-center">
-              <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7" />
-              </svg>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm transition-all duration-300">
+          <div className="bg-white px-10 py-8 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.15)] flex flex-col items-center gap-5 animate-in zoom-in-95 fade-in duration-300 border border-gray-100">
+            <div className="h-16 w-16 bg-green-100/50 rounded-full flex items-center justify-center relative">
+              <div className="absolute inset-0 bg-green-500 rounded-full animate-ping opacity-20"></div>
+              <CheckCircle className="w-8 h-8 text-green-600 relative z-10" />
             </div>
-            <p className="text-base font-black text-green-600">Order Saved Successfully</p>
+            <div className="text-center space-y-1">
+              <h3 className="text-lg font-bold text-gray-900">Order Saved Successfully</h3>
+              <p className="text-xs font-medium text-gray-500">Your order has been added to the dispatch queue.</p>
+            </div>
           </div>
         </div>
       )}
@@ -437,25 +551,35 @@ const Order = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {filteredAndSortedOrders.length === 0 ? (
+              {(isLoadingOrders || isRefreshingOrders) ? (
+                <TableSkeleton />
+              ) : filteredAndSortedOrders.length === 0 ? (
                 <tr>
-                  <td colSpan="9" className="px-6 py-8 text-center text-gray-500 italic">
-                    No orders found.
+                  <td colSpan="10" className="px-6 py-20 text-center">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="p-4 bg-gray-50 rounded-full">
+                        <Search size={32} className="text-gray-200" />
+                      </div>
+                      <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">No orders found</p>
+                    </div>
                   </td>
                 </tr>
               ) : (
                 filteredAndSortedOrders.map((order, idx) => (
-                  <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 font-bold text-primary">{order.orderNumber}</td>
-                    <td className="px-6 py-4 text-gray-600 text-xs text-center">{formatDisplayDate(order.orderDate)}</td>
-                    <td className="px-6 py-4 font-semibold">{order.clientName}</td>
-                    <td className="px-6 py-4 text-gray-600">{order.godownName}</td>
-                    <td className="px-6 py-4 text-gray-600">{order.itemName}</td>
-                    <td className="px-6 py-4 font-medium text-right">₹{order.rate}</td>
-                    <td className="px-6 py-4 text-right font-black text-primary">{order.qty}</td>
-                    <td className="px-6 py-4 text-gray-600 text-xs text-right">{order.currentStock}</td>
-                    <td className="px-6 py-4 text-gray-600 text-xs text-right">{order.intransitQty}</td>
-                    <td className="px-6 py-4 text-xs text-center text-gray-500 font-medium italic bg-gray-50/30 whitespace-nowrap">{order.createdBy}</td>
+                  <tr key={idx} className="group hover:bg-slate-50 transition-all duration-300">
+                    <td className="px-6 py-4 font-bold text-primary relative">
+                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-0 bg-primary group-hover:h-8 transition-all duration-300 rounded-r-full"></div>
+                      {order.orderNumber}
+                    </td>
+                    <td className="px-6 py-4 text-gray-500 text-[11px] font-black uppercase text-center">{formatDisplayDate(order.orderDate)}</td>
+                    <td className="px-6 py-4 font-bold text-gray-900">{order.clientName}</td>
+                    <td className="px-6 py-4 text-gray-600 font-medium">{order.godownName}</td>
+                    <td className="px-6 py-4 text-gray-800 font-semibold">{order.itemName}</td>
+                    <td className="px-6 py-4 font-medium text-right text-slate-500">₹{order.rate}</td>
+                    <td className="px-6 py-4 text-right font-black text-primary text-base">{order.qty}</td>
+                    <td className="px-6 py-4 text-gray-500 text-[11px] font-bold text-right bg-slate-50/50">{order.currentStock}</td>
+                    <td className="px-6 py-4 text-gray-500 text-[11px] font-bold text-right">{order.intransitQty}</td>
+                    <td className="px-6 py-4 text-[10px] text-center text-gray-400 font-bold uppercase tracking-tighter italic whitespace-nowrap">{order.createdBy}</td>
                   </tr>
                 ))
               )}
@@ -465,42 +589,49 @@ const Order = () => {
 
         {/* Mobile cards */}
         <div className="md:hidden divide-y divide-gray-200">
-          {filteredAndSortedOrders.length === 0 ? (
-            <div className="p-8 text-center text-gray-500 italic">No orders found.</div>
+          {(isLoadingOrders || isRefreshingOrders) ? (
+            <MobileSkeleton />
+          ) : filteredAndSortedOrders.length === 0 ? (
+            <div className="p-20 text-center flex flex-col items-center gap-4">
+              <div className="p-4 bg-gray-50 rounded-full">
+                <Search size={32} className="text-gray-200" />
+              </div>
+              <p className="text-xs font-black text-gray-400 uppercase tracking-widest">No records matching your filters</p>
+            </div>
           ) : (
             filteredAndSortedOrders.map((order, idx) => (
-              <div key={idx} className="p-4 space-y-2">
+              <div key={idx} className="p-6 space-y-4 hover:bg-slate-50 transition-colors">
                 <div className="flex justify-between items-start">
-                  <h4 className="font-bold text-gray-900">{order.clientName}</h4>
-                  <span className="px-2 py-0.5 bg-green-50 text-primary rounded text-[10px] font-bold">
-                    {order.orderNumber}
+                  <div>
+                    <h4 className="font-black text-gray-900 text-lg leading-tight">{order.clientName}</h4>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">{order.godownName}</p>
+                  </div>
+                  <span className="px-3 py-1 bg-primary/10 text-primary rounded-lg text-[10px] font-black uppercase tracking-tighter">
+                    #{order.orderNumber}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <p className="text-gray-400 text-[9px] uppercase">Godown</p>
-                    <p className="font-medium">{order.godownName}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-[9px] uppercase">Date</p>
-                    <p className="font-medium">{formatDisplayDate(order.orderDate)}</p>
-                  </div>
+                <div className="grid grid-cols-2 gap-4 text-xs bg-gray-50 p-4 rounded-2xl border border-gray-100">
                   <div className="col-span-2">
-                    <p className="text-gray-400 text-[9px] uppercase">Item</p>
-                    <p className="font-bold">{order.itemName}</p>
+                    <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-1 leading-none">Ordered Item</p>
+                    <p className="font-bold text-gray-800 text-sm">{order.itemName}</p>
                   </div>
                   <div>
-                    <p className="text-gray-400 text-[9px] uppercase">Rate</p>
-                    <p className="font-bold">₹{order.rate}</p>
+                    <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-1 leading-none">Rate</p>
+                    <p className="font-black text-gray-700">₹{order.rate}</p>
                   </div>
                   <div>
-                    <p className="text-gray-400 text-[9px] uppercase">Qty</p>
-                    <p className="font-bold text-primary">{order.qty}</p>
+                    <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-1 leading-none">Quantity</p>
+                    <p className="font-black text-primary text-sm">{order.qty}</p>
                   </div>
-                  <div className="col-span-2 mt-1">
-                    <p className="text-gray-400 text-[9px] uppercase">Created By</p>
-                    <p className="text-[10px] text-gray-600 italic">{order.createdBy}</p>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-black text-gray-500 uppercase">
+                      {order.createdBy.charAt(0)}
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-bold uppercase">{order.createdBy}</span>
                   </div>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{formatDisplayDate(order.orderDate)}</span>
                 </div>
               </div>
             ))
@@ -510,49 +641,46 @@ const Order = () => {
 
       {/* Add Order Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-6 lg:p-10 transition-all duration-500">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-6 transition-all duration-300">
           <div
-            className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-300"
+            className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200"
             onClick={() => !isSubmitting && setIsModalOpen(false)}
           />
-          <div className="relative bg-white sm:rounded-[2.5rem] shadow-[0_40px_100px_rgba(0,0,0,0.25)] w-full h-full sm:h-auto sm:max-h-[85vh] sm:max-w-4xl lg:max-w-5xl flex flex-col overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-10 duration-500 ease-out border border-white/20">
-            <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
-
-            <div className="relative px-6 py-5 sm:px-10 sm:py-8 border-b border-gray-50 flex justify-between items-center bg-white/80 backdrop-blur-md shrink-0 z-10">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-primary rounded-2xl shadow-lg shadow-primary/20">
-                  <Plus className="text-white w-5 h-5 stroke-[3]" />
+          <div className="relative bg-white sm:rounded-xl shadow-2xl w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-4xl lg:max-w-5xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-gray-200">
+            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white shrink-0 z-10">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 text-primary rounded-lg">
+                  <Plus size={20} className="stroke-[2.5]" />
                 </div>
                 <div>
-                  <h2 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight">New Order</h2>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] mt-0.5">Fill in the order details</p>
+                  <h2 className="text-xl font-bold text-gray-900 tracking-tight">New Order</h2>
+                  <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mt-0.5">Fill in the order details</p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => !isSubmitting && setIsModalOpen(false)}
-                className="group p-2 text-gray-400 hover:text-gray-900 transition-all bg-gray-50 hover:bg-gray-100 rounded-xl active:scale-90"
+                className="p-2 text-gray-400 hover:text-gray-700 transition-colors bg-gray-50 hover:bg-gray-100 rounded-md"
               >
-                <X size={20} className="group-hover:rotate-90 transition-transform duration-300" />
+                <X size={20} />
               </button>
             </div>
 
             <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-6 sm:p-10 space-y-10 custom-scrollbar bg-slate-50">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Order Date</label>
-                    <div className="relative">
-                      <input
-                        type="date"
-                        required
-                        value={formData.orderDate}
-                        onChange={(e) => setFormData({ ...formData, orderDate: e.target.value })}
-                        className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none text-sm font-semibold shadow-sm transition-all"
-                      />
-                    </div>
+              <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-8 custom-scrollbar bg-gray-50/30">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-700 uppercase tracking-wide">Order Date</label>
+                    <input
+                      type="date"
+                      required
+                      value={formData.orderDate}
+                      onChange={(e) => setFormData({ ...formData, orderDate: e.target.value })}
+                      className="w-full px-3 py-2 bg-white border border-gray-200 rounded focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm transition-all shadow-sm"
+                    />
                   </div>
-                  <div className="space-y-2 lg:col-span-1">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Client Selection</label>
+                  <div className="space-y-1.5 md:col-span-1">
+                    <label className="text-xs font-bold text-gray-700 uppercase tracking-wide">Client Selection</label>
                     <SearchableDropdown
                       value={formData.clientName}
                       onChange={(val) => setFormData({ ...formData, clientName: val })}
@@ -561,8 +689,8 @@ const Order = () => {
                       showAll={false}
                     />
                   </div>
-                  <div className="space-y-2 lg:col-span-1">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Location / Godown</label>
+                  <div className="space-y-1.5 md:col-span-1">
+                    <label className="text-xs font-bold text-gray-700 uppercase tracking-wide">Location / Godown</label>
                     <SearchableDropdown
                       value={formData.godownName}
                       onChange={(val) => setFormData({ ...formData, godownName: val })}
@@ -573,114 +701,105 @@ const Order = () => {
                   </div>
                 </div>
 
-                <div className="space-y-6">
-                  <div className="flex items-center gap-4 mb-2">
-                    <div className="h-[2px] flex-1 bg-gradient-to-r from-transparent via-gray-100 to-transparent"></div>
-                    <h3 className="text-[11px] font-black text-primary uppercase tracking-[0.3em] flex items-center gap-3">
-                      <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_10px_rgba(88,204,2,0.5)]"></span>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 mb-2">
+                    <h3 className="text-xs font-bold text-gray-800 uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-primary"></span>
                       Line Items
-                      <span className="px-2 py-0.5 bg-primary/10 rounded-lg text-[9px]">{formData.items.length}</span>
+                      <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] ml-1">{formData.items.length}</span>
                     </h3>
-                    <div className="h-[2px] flex-1 bg-gradient-to-r from-transparent via-gray-100 to-transparent"></div>
+                    <div className="h-[1px] flex-1 bg-gray-200"></div>
                   </div>
 
-                  <div className="space-y-5">
+                  <div className="space-y-4">
                     {formData.items.map((item, index) => (
                       <div
                         key={index}
-                        className="group relative animate-in slide-in-from-right-10 duration-300"
-                        style={{ animationDelay: `${index * 50}ms` }}
+                        className="relative flex flex-col gap-4 p-5 bg-white border border-gray-200 rounded shadow-sm hover:border-primary/30 transition-all duration-300 animate-in fade-in slide-in-from-top-4 ease-out"
+                        style={{ animationDuration: '400ms' }}
                       >
-                        <div className="relative flex flex-col gap-6 p-6 sm:p-8 bg-white border border-slate-200/60 sm:rounded-[2rem] shadow-sm hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10 transition-all duration-500">
-                          <div className="absolute -left-3 top-1/2 -translate-y-1/2 hidden sm:flex items-center justify-center w-6 h-6 bg-slate-50 text-[10px] font-black text-slate-400 rounded-full border border-slate-200 group-hover:bg-primary group-hover:text-white group-hover:border-primary transition-all duration-500">
-                            {index + 1}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-start">
+                          <div className="sm:col-span-6 space-y-1.5">
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Product / Item Name</label>
+                            <SearchableDropdown
+                              value={item.itemName}
+                              onChange={(val) => handleItemChange(index, 'itemName', val)}
+                              options={itemNames}
+                              placeholder="Select Product"
+                              showAll={false}
+                            />
                           </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 items-end">
-                            <div className="sm:col-span-6">
-                              <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Product / Item Name</label>
-                              <SearchableDropdown
-                                value={item.itemName}
-                                onChange={(val) => handleItemChange(index, 'itemName', val)}
-                                options={itemNames}
-                                placeholder="Select Product"
-                                showAll={false}
-                              />
-                            </div>
-                            <div className="sm:col-span-3">
-                              <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Unit Price (₹)</label>
+                          <div className="sm:col-span-3 space-y-1.5">
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Unit Price (₹)</label>
+                            <input
+                              type="number"
+                              required
+                              placeholder="0.00"
+                              value={item.rate}
+                              onChange={(e) => handleItemChange(index, 'rate', e.target.value)}
+                              className="w-full px-3 py-2 bg-white border border-gray-200 rounded focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm transition-all shadow-sm"
+                            />
+                          </div>
+                          <div className="sm:col-span-3 flex gap-3 items-end">
+                            <div className="flex-1 space-y-1.5">
+                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Quantity</label>
                               <input
                                 type="number"
                                 required
-                                placeholder="0.00"
-                                value={item.rate}
-                                onChange={(e) => handleItemChange(index, 'rate', e.target.value)}
-                                className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none text-sm font-semibold transition-all shadow-sm"
+                                placeholder="0"
+                                value={item.qty}
+                                onChange={(e) => handleItemChange(index, 'qty', e.target.value)}
+                                className="w-full px-3 py-2 bg-white border border-gray-200 rounded focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm font-bold text-gray-900 transition-all shadow-sm"
                               />
                             </div>
-                            <div className="sm:col-span-3 flex gap-4 items-end">
-                              <div className="flex-1">
-                                <label className="text-[9px] font-black text-slate-500 mb-2 uppercase tracking-widest block ml-1">Quantity</label>
-                                <input
-                                  type="number"
-                                  required
-                                  placeholder="0"
-                                  value={item.qty}
-                                  onChange={(e) => handleItemChange(index, 'qty', e.target.value)}
-                                  className="w-full px-5 py-3.5 bg-white border border-primary/20 rounded-2xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none text-sm font-black text-primary transition-all text-center shadow-sm"
-                                />
-                              </div>
-                              {formData.items.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveItem(index)}
-                                  className="shrink-0 p-3.5 text-red-400 hover:text-white transition-all bg-red-50/50 hover:bg-red-500 rounded-2xl active:scale-90 border border-red-100 mb-[1px]"
-                                  title="Remove Item"
-                                >
-                                  <X size={18} />
-                                </button>
-                              )}
-                            </div>
+                            {formData.items.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveItem(index)}
+                                className="shrink-0 p-2.5 text-red-500 hover:text-white hover:bg-red-500 transition-colors bg-red-50 rounded border border-red-100"
+                                title="Remove Item"
+                              >
+                                <X size={16} />
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
                     ))}
                   </div>
 
-                  <div className="flex justify-center pt-4">
+                  <div className="pt-2">
                     <button
                       type="button"
                       onClick={handleAddItem}
-                      className="group flex items-center gap-3 px-8 py-4 bg-white border-2 border-dashed border-gray-200 text-gray-400 hover:border-primary hover:text-primary hover:bg-primary/5 transition-all rounded-3xl font-black text-[10px] uppercase tracking-widest"
+                      className="flex items-center justify-center gap-2 w-full py-3 bg-white border border-dashed border-gray-300 text-gray-600 hover:text-primary hover:border-primary hover:bg-primary/5 transition-all rounded font-bold text-xs uppercase tracking-widest shadow-sm"
                     >
-                      <div className="p-1 bg-gray-50 group-hover:bg-primary/20 rounded-lg transition-colors">
-                        <Plus size={14} className="group-hover:rotate-90 transition-transform duration-500" />
-                      </div>
+                      <Plus size={16} />
                       Add Another Item
                     </button>
                   </div>
                 </div>
               </div>
 
-              <div className="px-6 py-6 sm:px-10 sm:py-8 border-t border-gray-100 bg-white/80 backdrop-blur-md flex flex-col sm:flex-row justify-end items-center gap-4 shrink-0 z-10">
+              <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex sm:flex-row justify-end items-center gap-3 shrink-0 z-10">
                 <button
                   type="button"
                   onClick={() => !isSubmitting && setIsModalOpen(false)}
-                  className="w-full sm:w-auto px-10 py-4 bg-gray-50 text-gray-400 rounded-2xl hover:bg-gray-100 hover:text-gray-900 transition-all font-black text-[10px] uppercase tracking-widest active:scale-95"
+                  className="px-6 py-2.5 bg-white text-gray-600 border border-gray-300 rounded hover:bg-gray-50 transition-colors font-bold text-xs uppercase tracking-widest shadow-sm"
                 >
-                  Discard Changes
+                  Discard
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full sm:w-auto min-w-[200px] flex items-center justify-center gap-3 px-10 py-4 bg-primary text-white rounded-2xl hover:bg-primary-hover transition-all font-black text-[10px] uppercase tracking-widest shadow-[0_15px_30px_rgba(88,204,2,0.3)] hover:shadow-[0_20px_40px_rgba(88,204,2,0.4)] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="min-w-[160px] flex items-center justify-center gap-2 px-6 py-2.5 bg-primary text-white rounded hover:bg-primary-hover transition-colors font-bold text-xs uppercase tracking-widest shadow-sm shadow-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? (
-                    <RefreshCw size={18} className="animate-spin" />
+                    <RefreshCw size={15} className="animate-spin" />
                   ) : (
-                    <Save size={18} className="stroke-[3]" />
+                    <Save size={15} />
                   )}
-                  {isSubmitting ? 'Confirming Order...' : 'Submit Order'}
+                  {isSubmitting ? 'Saving...' : 'Submit Order'}
                 </button>
               </div>
             </form>
@@ -691,6 +810,21 @@ const Order = () => {
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
           width: 6px;
+        }
+        @keyframes progress-loading {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        .animate-progress-loading {
+          animation: progress-loading 1.5s infinite linear;
+          width: 50%;
+        }
+        @keyframes shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        .animate-shimmer {
+          animation: shimmer 2s infinite ease-in-out;
         }
       `}</style>
     </div>

@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Save, History, ClipboardList, X, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Save, History, ClipboardList, X, ChevronUp, ChevronDown, RefreshCw, CheckCircle } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
-import { useDataSync } from '../../utils/useDataSync';
 
 const GODOWNS = ['Godown 1', 'Godown 2', 'Main Store', 'North Warehouse'];
 
@@ -55,77 +54,136 @@ const DispatchPlanning = () => {
   const [stockLocationFilter, setStockLocationFilter] = useState('');
 
   const [isSaving, setIsSaving] = useState(false);
+  const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
 
-  // --- Fetch function for pending orders (from ORDER sheet) ---
-  const fetchPendingOrders = useCallback(async (signal) => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'ORDER');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+  // State for data and loading
+  const [orders, setOrders] = useState([]);
+  const [dispatchHistory, setDispatchHistory] = useState([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [refreshingOrders, setRefreshingOrders] = useState(false);
+  const [refreshingHistory, setRefreshingHistory] = useState(false);
 
-    const response = await fetch(url.toString(), { signal });
-    const result = await response.json();
+  // Abort controllers for pending requests
+  const pendingAbortRef = useRef(null);
+  const historyAbortRef = useRef(null);
 
-    if (!result.success) return [];
+  // --- Fetch pending orders from ORDER sheet ---
+  const fetchPendingOrders = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshingOrders(true);
+    else setLoadingOrders(true);
 
-    const data = result.data.slice(4); // skip header rows
-    return data
-      .map((item, index) => ({
+    // Cancel any pending request
+    if (pendingAbortRef.current) {
+      pendingAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    pendingAbortRef.current = controller;
+    
+    try {
+      const url = new URL(API_URL);
+      url.searchParams.set('sheet', 'ORDER');
+      url.searchParams.set('mode', 'table');
+      if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+
+      const response = await fetch(url.toString(), { signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const result = await response.json();
+
+      if (!result.success) throw new Error(result.error || 'Unknown error');
+
+      const data = result.data.slice(4); // skip header rows
+      const mapped = data
+        .map((item, index) => ({
+          ...item,
+          originalIndex: index,
+          orderNo: item.orderNumber,
+          qty: item.qty || 0,
+          planningPendingQty: getVal(item, 'planningPendingQty', 11) || 0
+        }))
+        .filter(item => {
+          const hasQ = item.columnQ !== undefined && item.columnQ !== null && String(item.columnQ).trim() !== '';
+          const hasR = item.columnR !== undefined && item.columnR !== null && String(item.columnR).trim() !== '';
+          const pendingQty = parseFloat(String(item.planningPendingQty).replace(/[^0-9.-]+/g, ''));
+          return hasQ && !hasR && !isNaN(pendingQty) && pendingQty > 0;
+        });
+
+      setOrders(mapped);
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        console.error('fetchPendingOrders error:', error);
+        showToast('Error', 'Failed to load pending orders: ' + error.message);
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoadingOrders(false);
+        setRefreshingOrders(false);
+      }
+    }
+  }, [API_URL, SHEET_ID, showToast]);
+
+  // --- Fetch planning history from Planning sheet ---
+  const fetchPlanningHistory = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshingHistory(true);
+    else setLoadingHistory(true);
+
+    if (historyAbortRef.current) {
+      historyAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    historyAbortRef.current = controller;
+
+    try {
+      const url = new URL(API_URL);
+      url.searchParams.set('sheet', 'Planning');
+      url.searchParams.set('mode', 'table');
+      if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+
+      const response = await fetch(url.toString(), { signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const result = await response.json();
+
+      if (!result.success) throw new Error(result.error || 'Unknown error');
+
+      const data = result.data.slice(3); // skip header rows
+      const mapped = data.map(item => ({
         ...item,
-        originalIndex: index,
-        orderNo: item.orderNumber,
-        qty: item.qty || 0,
-        planningPendingQty: getVal(item, 'planningPendingQty', 11) || 0
-      }))
-      .filter(item => {
-        const hasQ = item.columnQ !== undefined && item.columnQ !== null && String(item.columnQ).trim() !== '';
-        const hasR = item.columnR !== undefined && item.columnR !== null && String(item.columnR).trim() !== '';
-        const pendingQty = parseFloat(String(item.planningPendingQty).replace(/[^0-9.-]+/g, ''));
-        return hasQ && !hasR && !isNaN(pendingQty) && pendingQty > 0;
-      });
-  }, [API_URL, SHEET_ID]);
+        orderNo: item.orderNumber || item.orderNo
+      }));
 
-  // --- Fetch function for planning history (from Planning sheet) ---
-  const fetchPlanningHistory = useCallback(async (signal) => {
-    const url = new URL(API_URL);
-    url.searchParams.set('sheet', 'Planning');
-    url.searchParams.set('mode', 'table');
-    if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+      setDispatchHistory(mapped);
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        console.error('fetchPlanningHistory error:', error);
+        showToast('Error', 'Failed to load planning history: ' + error.message);
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoadingHistory(false);
+        setRefreshingHistory(false);
+      }
+    }
+  }, [API_URL, SHEET_ID, showToast]);
 
-    const response = await fetch(url.toString(), { signal });
-    const result = await response.json();
+  // Initial load on mount
+  useEffect(() => {
+    fetchPendingOrders();
+    fetchPlanningHistory();
 
-    if (!result.success) return [];
-
-    const data = result.data.slice(3); // skip header rows
-    return data.map(item => ({
-      ...item,
-      orderNo: item.orderNumber || item.orderNo
-    }));
-  }, [API_URL, SHEET_ID]);
-
-  // --- Use data sync hooks ---
-  const { data: orders, loading: loadingOrders, refreshing: refreshingOrders, refresh: refreshOrders } = useDataSync(
-    'ORDER',
-    fetchPendingOrders,
-    'dispatchPlanningOrders',
-    10 * 60 * 1000
-  );
-  const { data: dispatchHistory, loading: loadingHistory, refreshing: refreshingHistory, refresh: refreshHistory } = useDataSync(
-    'Planning',
-    fetchPlanningHistory,
-    'dispatchPlanningHistory',
-    10 * 60 * 1000
-  );
-
-  const isLoading = loadingOrders || loadingHistory;     // first-load only
-  const isRefreshing = refreshingOrders || refreshingHistory; // manual refresh
+    return () => {
+      if (pendingAbortRef.current) pendingAbortRef.current.abort();
+      if (historyAbortRef.current) historyAbortRef.current.abort();
+    };
+  }, [fetchPendingOrders, fetchPlanningHistory]);
 
   // Clear selection/edit data on tab switch
   useEffect(() => {
     setSelectedRows({});
     setEditData({});
   }, [activeTab]);
+
+  const isLoading = loadingOrders || loadingHistory;
+  const isRefreshing = refreshingOrders || refreshingHistory;
 
   // Get unique values for filters - Memoized (unchanged)
   const allUniqueClients = useMemo(
@@ -236,7 +294,7 @@ const DispatchPlanning = () => {
     return getSortedItems(filtered);
   }, [dispatchHistory, searchTerm, clientFilter, godownFilter, orderNoFilter, itemFilter, dateFilter, getSortedItems]);
 
-  // ========== FIX: Use unique key including originalIndex ==========
+  // ========== Use unique key including originalIndex ==========
   const getRowKey = useCallback((order) => `${order.orderNo}_${order.itemName}_${order.originalIndex}`, []);
 
   const handleCheckboxToggle = useCallback((order) => {
@@ -309,11 +367,12 @@ const DispatchPlanning = () => {
       const result = await response.json();
       if (result.success) {
         showToast('Planning saved successfully!', 'success');
-        // Invalidate cache and refetch both data sources
-        sessionStorage.removeItem('dispatchPlanningOrders');
-        sessionStorage.removeItem('dispatchPlanningHistory');
-        await refreshOrders();
-        await refreshHistory();
+        setShowSuccessOverlay(true);
+        setTimeout(() => setShowSuccessOverlay(false), 2500);
+        
+        // Refresh both data sources
+        await fetchPendingOrders(true);
+        await fetchPlanningHistory(true);
         setSelectedRows({});
         setEditData({});
       } else {
@@ -325,15 +384,13 @@ const DispatchPlanning = () => {
     } finally {
       setIsSaving(false);
     }
-  }, [selectedRows, orders, editData, refreshOrders, refreshHistory, showToast, API_URL, SHEET_ID, getRowKey]);
+  }, [selectedRows, orders, editData, fetchPendingOrders, fetchPlanningHistory, showToast, API_URL, SHEET_ID, getRowKey]);
 
   // Manual refresh
   const handleRefresh = useCallback(() => {
-    sessionStorage.removeItem('dispatchPlanningOrders');
-    sessionStorage.removeItem('dispatchPlanningHistory');
-    refreshOrders();
-    refreshHistory();
-  }, [refreshOrders, refreshHistory]);
+    fetchPendingOrders(true);
+    fetchPlanningHistory(true);
+  }, [fetchPendingOrders, fetchPlanningHistory]);
 
   const clearFilters = useCallback(() => {
     setSearchTerm('');
@@ -352,7 +409,55 @@ const DispatchPlanning = () => {
 
   const isAnySelected = Object.values(selectedRows).some(Boolean);
 
-  // ========== JSX (only selection key updated) ==========
+  // ========== Sub-components for Loading ==========
+  const TableSkeleton = ({ cols = 13 }) => (
+    <>
+      {[...Array(6)].map((_, i) => (
+        <tr key={i} className="border-b border-gray-100 last:border-0 relative overflow-hidden h-16">
+          {[...Array(cols)].map((_, j) => (
+            <td key={j} className="px-6 py-4">
+              <div className="h-4 bg-gray-100 rounded-lg relative overflow-hidden w-full">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+              </div>
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+
+  const MobileSkeleton = () => (
+    <div className="md:hidden divide-y divide-gray-100">
+      {[...Array(4)].map((_, i) => (
+        <div key={i} className="p-6 space-y-4 relative overflow-hidden">
+          <div className="flex justify-between items-center">
+            <div className="h-5 w-40 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+            <div className="h-4 w-16 bg-primary/5 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="h-2 w-10 bg-gray-50 rounded"></div>
+              <div className="h-4 w-full bg-gray-100 rounded-lg relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="h-2 w-10 bg-gray-50 rounded"></div>
+              <div className="h-4 w-full bg-gray-100 rounded-lg relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // ========== JSX (unchanged except loading overlay) ==========
   return (
     <div className="">
       {/* Header Row with Title, Tabs, Filters, and Actions */}
@@ -410,10 +515,15 @@ const DispatchPlanning = () => {
                 </button>
                 <button
                   onClick={handleSave}
-                  className="flex items-center gap-2 px-3 py-2 bg-primary text-white rounded hover:bg-primary-hover shadow-md font-bold text-[13px]"
+                  disabled={isSaving}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded hover:bg-primary-hover shadow-md shadow-primary/20 font-bold text-[13px] disabled:opacity-50 disabled:cursor-not-allowed transition-all min-w-[100px]"
                 >
-                  <Save size={14} />
-                  Save
+                  {isSaving ? (
+                    <RefreshCw size={14} className="animate-spin" />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                  {isSaving ? 'Saving...' : 'Save'}
                 </button>
               </div>
             )}
@@ -478,39 +588,30 @@ const DispatchPlanning = () => {
         </div>
       </div>
 
-      {/* Loading Overlay (unchanged) */}
-      {isLoading && (
-        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
-          <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
-            <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-            <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-            <div className="relative">
-              <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
-                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
-                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
-              </div>
+      {/* Subtle Progress Bar when refreshing */}
+      {(refreshingOrders || refreshingHistory) && (
+        <div className="fixed top-0 left-0 w-full h-1 z-[101] bg-gray-100 overflow-hidden">
+          <div className="h-full bg-primary animate-progress-loading shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
+        </div>
+      )}
+
+      {/* Success overlay */}
+      {showSuccessOverlay && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm transition-all duration-300">
+          <div className="bg-white px-10 py-8 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.15)] flex flex-col items-center gap-5 animate-in zoom-in-95 fade-in duration-300 border border-gray-100">
+            <div className="h-16 w-16 bg-green-100/50 rounded-full flex items-center justify-center relative">
+              <div className="absolute inset-0 bg-green-500 rounded-full animate-ping opacity-20"></div>
+              <CheckCircle className="w-8 h-8 text-green-600 relative z-10" />
             </div>
-            <div className="flex flex-col items-center text-center">
-              <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
-                Loading
-                <span className="inline-flex ml-1">
-                  <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
-                  <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
-                  <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
-                </span>
-              </h3>
-              <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
-                Fetching Planning Data
-              </p>
+            <div className="text-center space-y-1">
+              <h3 className="text-lg font-bold text-gray-900">Planning Saved Successfully</h3>
+              <p className="text-xs font-medium text-gray-500">The dispatch planning has been successfully updated.</p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Data Table */}
+      {/* Data Table (unchanged) */}
       <div className="bg-white rounded shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/50 overflow-hidden max-w-[1200px] mx-auto">
         {activeTab === 'pending' ? (
           <>
@@ -564,104 +665,114 @@ const DispatchPlanning = () => {
                     <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 text-right" onClick={() => requestSort('qtyDelivered')}>
                       <div className="flex items-center gap-1 justify-end">Qty Delivered <SortIcon column="qtyDelivered" sortConfig={sortConfig} /></div>
                     </th>
-                   </tr>
+                  </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 text-sm">
-                  {filteredAndSortedOrders.map((order) => {
-                    const key = getRowKey(order);
-                    return (
-                      <tr key={key} className={`${selectedRows[key] ? 'bg-green-50/50' : 'hover:bg-gray-50'} transition-colors`}>
-                        <td className="px-6 py-4 text-center">
-                          <input
-                            type="checkbox"
-                            checked={!!selectedRows[key]}
-                            onChange={() => handleCheckboxToggle(order)}
-                            className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
-                          />
-                        </td>
-                        {isAnySelected && (
-                          <>
-                            <td className="px-6 py-4 animate-column text-right">
-                              {selectedRows[key] ? (
-                                <input
-                                  type="number"
-                                  value={editData[key]?.dispatchQty || ''}
-                                  onChange={(e) => handleEditChange(key, 'dispatchQty', e.target.value)}
-                                  className="w-20 px-2 py-1 border rounded text-xs outline-none focus:border-primary text-right"
-                                />
-                              ) : (
-                                <span className="text-gray-400">-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 animate-column text-center">
-                              {selectedRows[key] ? (
-                                <input
-                                  type="date"
-                                  value={editData[key]?.dispatchDate || ''}
-                                  onChange={(e) => handleEditChange(key, 'dispatchDate', e.target.value)}
-                                  className="px-2 py-1 border rounded text-xs outline-none focus:border-primary"
-                                />
-                              ) : (
-                                <span className="text-gray-400">-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 animate-column text-center">
-                              {selectedRows[key] ? (
-                                <select
-                                  value={editData[key]?.gstIncluded || ''}
-                                  onChange={(e) => handleEditChange(key, 'gstIncluded', e.target.value)}
-                                  className="px-2 py-1 border rounded text-xs outline-none focus:border-primary"
-                                >
-                                  <option value="Yes">Yes</option>
-                                  <option value="No">No</option>
-                                </select>
-                              ) : (
-                                <span className="text-gray-400">-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 animate-column text-center">
-                              {selectedRows[key] ? (
-                                <select
-                                  value={editData[key]?.godownName || order.godownName}
-                                  onChange={(e) => handleEditChange(key, 'godownName', e.target.value)}
-                                  className="px-2 py-1 border rounded text-xs outline-none focus:border-primary w-full"
-                                >
-                                  {[...new Set([...GODOWNS, order.godownName])].map(g => (
-                                    <option key={g} value={g}>{g}</option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span className="text-gray-400">-</span>
-                              )}
-                            </td>
-                          </>
-                        )}
-                        <td className="px-6 py-4">{order.orderNo}</td>
-                        <td className="px-6 py-4 text-center">{formatDisplayDate(order.orderDate)}</td>
-                        <td className="px-6 py-4">{order.clientName}</td>
-                        <td className="px-6 py-4 text-center">{order.godownName}</td>
-                        <td className="px-6 py-4">{order.itemName}</td>
-                        <td className="px-6 py-4 text-right">{order.rate}</td>
-                        <td className="px-6 py-4 text-right font-bold text-primary">{order.qty}</td>
-                        <td className="px-6 py-4 text-right text-xs font-medium text-gray-700">{order.currentStock || '-'}</td>
-                        <td className="px-6 py-4 text-right font-medium text-gray-700">{order.intransitQty || '0'}</td>
-                        <td className="px-6 py-4 text-right font-medium text-gray-700">{order.planningQty || '0'}</td>
-                        <td className="px-6 py-4 text-right font-medium text-gray-700">{order.planningPendingQty || '0'}</td>
-                        <td className="px-6 py-4 text-right font-medium text-gray-700">{order.qtyDelivered || '0'}</td>
-                      </tr>
-                    );
-                  })}
-                  {filteredAndSortedOrders.length === 0 && (
-                    <tr>
-                      <td colSpan={isAnySelected ? 17 : 13} className="px-4 py-8 text-center text-gray-500 italic">No items found matching your filters.</td>
-                    </tr>
-                  )}
-                </tbody>
+                 <tbody className="divide-y divide-gray-200 text-sm">
+                   {loadingOrders ? (
+                     <TableSkeleton cols={isAnySelected ? 17 : 13} />
+                   ) : filteredAndSortedOrders.length === 0 ? (
+                     <tr>
+                       <td colSpan={isAnySelected ? 17 : 13} className="px-6 py-20 text-center">
+                         <div className="flex flex-col items-center gap-3">
+                           <div className="p-4 bg-gray-50 rounded-full">
+                             <ClipboardList size={32} className="text-gray-200" />
+                           </div>
+                           <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">No pending orders found</p>
+                         </div>
+                       </td>
+                     </tr>
+                   ) : (
+                     filteredAndSortedOrders.map((order) => {
+                       const key = getRowKey(order);
+                       return (
+                         <tr key={key} className={`group ${selectedRows[key] ? 'bg-green-50/50' : 'hover:bg-gray-50'} transition-all duration-300`}>
+                           <td className="px-6 py-4 text-center">
+                             <input
+                               type="checkbox"
+                               checked={!!selectedRows[key]}
+                               onChange={() => handleCheckboxToggle(order)}
+                               className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
+                             />
+                           </td>
+                           {isAnySelected && (
+                             <>
+                               <td className="px-6 py-4 animate-column text-right">
+                                 {selectedRows[key] ? (
+                                   <input
+                                     type="number"
+                                     value={editData[key]?.dispatchQty || ''}
+                                     onChange={(e) => handleEditChange(key, 'dispatchQty', e.target.value)}
+                                     className="w-20 px-2 py-1 border rounded text-xs outline-none focus:border-primary text-right"
+                                   />
+                                 ) : (
+                                   <span className="text-gray-400">-</span>
+                                 )}
+                               </td>
+                               <td className="px-6 py-4 animate-column text-center">
+                                 {selectedRows[key] ? (
+                                   <input
+                                     type="date"
+                                     value={editData[key]?.dispatchDate || ''}
+                                     onChange={(e) => handleEditChange(key, 'dispatchDate', e.target.value)}
+                                     className="px-2 py-1 border rounded text-xs outline-none focus:border-primary"
+                                   />
+                                 ) : (
+                                   <span className="text-gray-400">-</span>
+                                 )}
+                               </td>
+                               <td className="px-6 py-4 animate-column text-center">
+                                 {selectedRows[key] ? (
+                                   <select
+                                     value={editData[key]?.gstIncluded || ''}
+                                     onChange={(e) => handleEditChange(key, 'gstIncluded', e.target.value)}
+                                     className="px-2 py-1 border rounded text-xs outline-none focus:border-primary"
+                                   >
+                                     <option value="Yes">Yes</option>
+                                     <option value="No">No</option>
+                                   </select>
+                                 ) : (
+                                   <span className="text-gray-400">-</span>
+                                 )}
+                               </td>
+                               <td className="px-6 py-4 animate-column text-center">
+                                 {selectedRows[key] ? (
+                                   <select
+                                     value={editData[key]?.godownName || order.godownName}
+                                     onChange={(e) => handleEditChange(key, 'godownName', e.target.value)}
+                                     className="px-2 py-1 border rounded text-xs outline-none focus:border-primary w-full"
+                                   >
+                                     {[...new Set([...GODOWNS, order.godownName])].map(g => (
+                                       <option key={g} value={g}>{g}</option>
+                                     ))}
+                                   </select>
+                                 ) : (
+                                   <span className="text-gray-400">-</span>
+                                 )}
+                               </td>
+                             </>
+                           )}
+                           <td className="px-6 py-4 font-bold text-gray-900">{order.orderNo}</td>
+                           <td className="px-6 py-4 text-center text-[11px] font-black uppercase text-gray-500">{formatDisplayDate(order.orderDate)}</td>
+                           <td className="px-6 py-4 font-bold text-gray-800">{order.clientName}</td>
+                           <td className="px-6 py-4 text-center font-medium text-gray-600">{order.godownName}</td>
+                           <td className="px-6 py-4 font-semibold text-gray-700">{order.itemName}</td>
+                           <td className="px-6 py-4 text-right text-slate-500 font-medium">₹{order.rate}</td>
+                           <td className="px-6 py-4 text-right font-black text-primary text-base">{order.qty}</td>
+                           <td className="px-6 py-4 text-right text-xs font-bold text-gray-500 bg-slate-50/50">{order.currentStock || '-'}</td>
+                           <td className="px-6 py-4 text-right font-bold text-gray-500">{order.intransitQty || '0'}</td>
+                           <td className="px-6 py-4 text-right font-bold text-gray-500">{order.planningQty || '0'}</td>
+                           <td className="px-6 py-4 text-right font-bold text-primary">{order.planningPendingQty || '0'}</td>
+                           <td className="px-6 py-4 text-right font-bold text-green-600">{order.qtyDelivered || '0'}</td>
+                         </tr>
+                       );
+                     })
+                   )}
+                 </tbody>
               </table>
               <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-gray-100 to-transparent pointer-events-none opacity-30"></div>
             </div>
 
-            {/* Mobile Card View (keys updated) */}
+            {/* Mobile Card View (unchanged) */}
             <div className="md:hidden divide-y divide-gray-200">
               {filteredAndSortedOrders.map((order) => {
                 const key = getRowKey(order);
@@ -804,65 +915,92 @@ const DispatchPlanning = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 text-sm italic">
-                  {filteredAndSortedHistory.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4">{item.orderNo}</td>
-                      <td className="px-6 py-4 font-bold text-primary">{item.dispatchNo}</td>
-                      <td className="px-6 py-4 font-semibold text-right">{item.dispatchQty}</td>
-                      <td className="px-6 py-4 text-center">{formatDisplayDate(item.dispatchDate)}</td>
-                      <td className="px-6 py-4 text-center">{item.gstIncluded}</td>
-                      <td className="px-6 py-4">{item.clientName}</td>
-                      <td className="px-6 py-4 text-center">{item.godownName}</td>
-                      <td className="px-6 py-4 text-center">{formatDisplayDate(item.orderDate)}</td>
-                      <td className="px-6 py-4">{item.itemName}</td>
-                      <td className="px-6 py-4 text-right">{item.rate}</td>
-                      <td className="px-6 py-4 text-right font-bold">{item.qty}</td>
+                  {loadingHistory ? (
+                    <TableSkeleton cols={11} />
+                  ) : filteredAndSortedHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan="11" className="px-6 py-20 text-center">
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="p-4 bg-gray-50 rounded-full">
+                            <History size={32} className="text-gray-200" />
+                          </div>
+                          <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">No planning history found</p>
+                        </div>
+                      </td>
                     </tr>
-                  ))}
-                  {filteredAndSortedHistory.length === 0 && (
-                    <tr><td colSpan="11" className="px-4 py-8 text-center text-gray-500">No planning history found.</td></tr>
+                  ) : (
+                    filteredAndSortedHistory.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50 transition-colors group">
+                        <td className="px-6 py-4 font-medium text-gray-500">{item.orderNo}</td>
+                        <td className="px-6 py-4 font-bold text-primary">{item.dispatchNo}</td>
+                        <td className="px-6 py-4 font-black text-right text-base text-gray-800">{item.dispatchQty}</td>
+                        <td className="px-6 py-4 text-center text-[11px] font-black uppercase text-gray-500">{formatDisplayDate(item.dispatchDate)}</td>
+                        <td className="px-6 py-4 text-center">
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter ${item.gstIncluded === 'Yes' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                            GST: {item.gstIncluded}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-bold text-gray-800">{item.clientName}</td>
+                        <td className="px-6 py-4 text-center font-medium text-gray-600">{item.godownName}</td>
+                        <td className="px-6 py-4 text-center text-[10px] font-bold text-gray-400 uppercase">{formatDisplayDate(item.orderDate)}</td>
+                        <td className="px-6 py-4 font-semibold text-gray-700">{item.itemName}</td>
+                        <td className="px-6 py-4 text-right text-slate-400 font-medium">₹{item.rate}</td>
+                        <td className="px-6 py-4 text-right font-black text-gray-400">{item.qty}</td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
               <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-gray-100 to-transparent pointer-events-none opacity-30"></div>
             </div>
-            <div className="md:hidden divide-y divide-gray-200">
-              {filteredAndSortedHistory.map((item, idx) => (
-                <div key={idx} className="p-4 space-y-3 bg-white">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-[10px] font-bold text-primary uppercase leading-none mb-1">{item.dispatchNo}</p>
-                      <h4 className="text-sm font-bold text-gray-900 leading-tight">{item.clientName}</h4>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-[11px] text-gray-600">
-                    <div className="flex justify-between border-b border-gray-50 pb-1">
-                      <span className="text-gray-400">Order No</span>
-                      <span className="font-medium">{item.orderNo}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-gray-50 pb-1">
-                      <span className="text-gray-400">Disp Qty</span>
-                      <span className="font-bold text-primary">{item.dispatchQty}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-gray-50 pb-1">
-                      <span className="text-gray-400">Disp Date</span>
-                      <span className="font-medium">{formatDisplayDate(item.dispatchDate)}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-gray-50 pb-1">
-                      <span className="text-gray-400">GST</span>
-                      <span className="font-medium">{item.gstIncluded}</span>
-                    </div>
-                    <div className="col-span-2">
-                      <p className="text-gray-400 mb-0.5">Item Details</p>
-                      <p className="font-bold text-gray-800 uppercase">{item.itemName} @ {item.rate}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {filteredAndSortedHistory.length === 0 && (
-                <div className="p-8 text-center text-gray-500 text-sm italic">History is empty.</div>
-              )}
-            </div>
+             <div className="md:hidden divide-y divide-gray-200">
+               {loadingHistory ? (
+                 <MobileSkeleton />
+               ) : filteredAndSortedHistory.length === 0 ? (
+                 <div className="p-20 text-center flex flex-col items-center gap-4">
+                   <div className="p-4 bg-gray-50 rounded-full">
+                     <History size={32} className="text-gray-200" />
+                   </div>
+                   <p className="text-xs font-black text-gray-400 uppercase tracking-widest text-gray-400">History is empty</p>
+                 </div>
+               ) : (
+                 filteredAndSortedHistory.map((item, idx) => (
+                   <div key={idx} className="p-6 space-y-4 hover:bg-slate-50 transition-colors bg-white">
+                     <div className="flex justify-between items-start">
+                       <div>
+                         <p className="text-[10px] font-black text-primary uppercase tracking-[0.2em] mb-1">{item.dispatchNo}</p>
+                         <h4 className="text-lg font-black text-gray-900 leading-tight">{item.clientName}</h4>
+                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Order: {item.orderNo} | {item.itemName}</p>
+                       </div>
+                       <div className="text-right">
+                         <span className="block px-3 py-1 bg-primary text-white rounded-lg text-sm font-black tracking-tighter shadow-sm">
+                           {item.dispatchQty}
+                         </span>
+                         <span className="block text-[9px] font-black text-gray-300 uppercase tracking-tighter mt-1">Disp Qty</span>
+                       </div>
+                     </div>
+                     <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-[11px] bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+                       <div className="flex flex-col gap-0.5">
+                         <span className="text-[9px] font-black text-gray-400 uppercase tracking-[0.1em]">Disp Date</span>
+                         <span className="font-bold text-gray-700">{formatDisplayDate(item.dispatchDate)}</span>
+                       </div>
+                       <div className="flex flex-col gap-0.5">
+                         <span className="text-[9px] font-black text-gray-400 uppercase tracking-[0.1em]">GST</span>
+                         <span className="font-bold text-gray-700">{item.gstIncluded === 'Yes' ? 'Included' : 'Excluded'}</span>
+                       </div>
+                       <div className="flex flex-col gap-0.5">
+                         <span className="text-[9px] font-black text-gray-400 uppercase tracking-[0.1em]">Godown</span>
+                         <span className="font-bold text-gray-700">{item.godownName}</span>
+                       </div>
+                       <div className="flex flex-col gap-0.5">
+                         <span className="text-[9px] font-black text-gray-400 uppercase tracking-[0.1em]">Rate</span>
+                         <span className="font-bold text-gray-700">₹{item.rate}</span>
+                       </div>
+                     </div>
+                   </div>
+                 ))
+               )}
+             </div>
           </>
         )}
       </div>

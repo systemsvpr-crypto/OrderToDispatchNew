@@ -107,58 +107,63 @@ const SearchableDropdown = ({
             </button>
 
             {isOpen && (
-                <div className="absolute z-[100] mt-3 w-full bg-white/95 backdrop-blur-xl border border-white/40 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.15)] overflow-hidden animate-in fade-in zoom-in-95 duration-300 ease-out origin-top">
+                <div className="absolute z-[100] mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.1)] overflow-hidden animate-in fade-in zoom-in-95 duration-200 ease-out origin-top font-sans">
                     {/* Search Input */}
-                    <div className="p-4 border-b border-gray-50 bg-gray-50/20">
+                    <div className="p-2 border-b border-gray-50 bg-gray-50/30">
                         <div className="relative group">
-                            <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors" />
+                            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors" />
                             <input
                                 ref={inputRef}
                                 type="text"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 onKeyDown={handleKeyDown}
-                                placeholder="Quick search..."
-                                className="w-full pl-10 pr-10 py-3 text-sm bg-white border border-gray-100 rounded-xl focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none transition-all font-medium"
+                                placeholder="Search..."
+                                className="w-full pl-9 pr-8 py-2 text-sm bg-white border border-gray-100 rounded-lg focus:ring-4 focus:ring-primary/5 focus:border-primary outline-none transition-all font-medium"
                             />
                             {searchTerm && (
                                 <button
                                     onClick={() => setSearchTerm('')}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-red-500 p-1 rounded-lg hover:bg-red-50 transition-all font-black"
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-red-500 p-1 transition-all"
                                 >
-                                    <X size={16} />
+                                    <X size={14} />
                                 </button>
                             )}
                         </div>
                     </div>
-
+ 
                     {/* Options List */}
-                    <div ref={listRef} className="max-h-72 overflow-y-auto p-2 flex flex-col gap-1 custom-scrollbar">
+                    <div 
+                      ref={listRef} 
+                      className="max-h-60 overflow-y-auto p-1.5 flex flex-col gap-0.5 
+                                 scrollbar-thin scrollbar-thumb-gray-200 scrollbar-track-transparent hover:scrollbar-thumb-gray-300"
+                    >
                         {allItems.map((opt, idx) => {
                             const isAllOption = showAll && idx === 0 && opt === '';
                             const label = isAllOption ? allLabel : opt;
                             const isSelected = value === opt;
                             const isFocused = focusedIndex === idx;
-
+ 
                             return (
                                 <button
                                     key={idx}
                                     type="button"
                                     onClick={() => handleSelect(opt)}
-                                    className={`w-full text-left px-4 py-3.5 text-sm rounded-xl transition-all whitespace-normal ${isFocused ? `bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02] z-10` :
-                                        isSelected ? `bg-primary/10 text-primary font-black border-l-4 border-primary` :
-                                            'text-gray-600 hover:bg-gray-50 hover:pl-5'
-                                        }`}
+                                    className={`w-full text-left px-3.5 py-2.5 text-sm rounded-lg transition-all whitespace-normal ${
+                                        isFocused ? `bg-primary/10 text-primary shadow-sm` :
+                                        isSelected ? `bg-primary/5 text-primary font-bold border-l-2 border-primary` :
+                                        'text-gray-600 hover:bg-gray-50'
+                                    }`}
                                 >
                                     {label}
                                 </button>
                             );
                         })}
-
+ 
                         {allItems.length === 0 && (
-                            <div className="px-4 py-8 text-center">
-                                <Search size={24} className="mx-auto text-gray-200 mb-2" />
-                                <p className="text-xs text-gray-400 font-medium">No results found</p>
+                            <div className="px-4 py-6 text-center">
+                                <Search size={20} className="mx-auto text-gray-200 mb-2" />
+                                <p className="text-[11px] text-gray-400 font-medium italic">No results found</p>
                             </div>
                         )}
                     </div>

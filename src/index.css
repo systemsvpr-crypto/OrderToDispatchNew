@@ -59,9 +59,22 @@ input::-webkit-inner-spin-button {
   margin: 0;
 }
 
-input[type=number] {
-  -moz-appearance: textfield;
-  appearance: textfield;
+/* Skeleton Shimmer Animation */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-shimmer {
+  animation: shimmer 1.4s infinite ease-in-out;
+  will-change: transform;
+  transition: none !important;
+}
+
+.animate-shimmer-fast {
+  animation: shimmer 0.9s infinite ease-in-out;
+  will-change: transform;
+  transition: none !important;
 }
 
 /* Print styles */

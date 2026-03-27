@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   FileText,
   Truck,
@@ -25,7 +25,6 @@ import {
   Filler,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
-import { useDataSync } from "../../utils/useDataSync";
 import { useToast } from "../../contexts/ToastContext";
 
 // Register ChartJS components
@@ -43,9 +42,6 @@ ChartJS.register(
 // Environment variables
 const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
 const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
-
-// Cache duration (10 minutes)
-const CACHE_DURATION = 10 * 60 * 1000;
 
 // --- Helper: safely get value from object using multiple possible keys ---
 const getVal = (obj, ...possibleKeys) => {
@@ -67,7 +63,7 @@ const safeNumber = (val) => {
   return isNaN(num) ? 0 : num;
 };
 
-// --- Fetcher for ORDER sheet (identical to DispatchPlanning) ---
+// --- Fetcher for ORDER sheet ---
 const fetchOrderSheet = async (signal) => {
   const url = new URL(API_URL);
   url.searchParams.set("sheet", "ORDER");
@@ -125,23 +121,75 @@ const fetchPlanningSheet = async (signal) => {
 const Dashboard = () => {
   const { showToast } = useToast();
 
-  // Data sync hooks invoked directly in the component
-  const {
-    data: orders,
-    loading: loadingOrders,
-    refreshing: refreshingOrders,
-    refresh: refreshOrders,
-  } = useDataSync("Dashboard Orders", fetchOrderSheet, "dashboardOrders", CACHE_DURATION);
+  // State for data and loading
+  const [orders, setOrders] = useState([]);
+  const [planningData, setPlanningData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const {
-    data: planningData,
-    loading: loadingPlanning,
-    refreshing: refreshingPlanning,
-    refresh: refreshPlanning,
-  } = useDataSync("Dashboard Planning", fetchPlanningSheet, "dashboardPlanning", CACHE_DURATION);
+  // Abort controllers for pending requests
+  const abortControllerRef = useRef(null);
 
-  const loading = loadingOrders || loadingPlanning;
-  const refreshing = refreshingOrders || refreshingPlanning;
+  // Fetch all dashboard data
+  const fetchDashboardData = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Minimum display time for skeleton animation
+    const MIN_DISPLAY_MS = 1500;
+    const minTimer = new Promise((resolve) => setTimeout(resolve, MIN_DISPLAY_MS));
+
+    const fetchData = async () => {
+      const [ordersData, planData] = await Promise.all([
+        fetchOrderSheet(controller.signal),
+        fetchPlanningSheet(controller.signal)
+      ]);
+      return { ordersData, planData };
+    };
+
+    try {
+      const [{ ordersData, planData }] = await Promise.all([
+        fetchData(),
+        minTimer
+      ]);
+
+      if (!controller.signal.aborted) {
+        setOrders(ordersData);
+        setPlanningData(planData);
+      }
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        console.error("Failed to fetch dashboard data:", error);
+        showToast("Failed to load dashboard data", "error");
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, [showToast]);
+
+  // Initial load on mount
+  useEffect(() => {
+    fetchDashboardData();
+    return () => {
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+    };
+  }, [fetchDashboardData]);
+
+  // Refresh
+  const handleRefresh = useCallback(() => {
+    fetchDashboardData(true);
+  }, [fetchDashboardData]);
+
+  // ... (rest of the component remains identical, including stats, chart, and UI) ...
 
   // State for stats and chart data
   const [stats, setStats] = useState({
@@ -257,8 +305,10 @@ const Dashboard = () => {
 
     // Extract all unique month keys for continuous timeline
     const allMonths = new Set();
-    monthlyMap.forEach(monthMap => {
-      monthMap.keys().forEach(m => allMonths.add(m));
+    monthlyMap.forEach((monthMap) => {
+      for (const m of monthMap.keys()) {
+        allMonths.add(m);
+      }
     });
     const rawMonths = Array.from(allMonths).sort();
     let sortedMonths = [];
@@ -326,11 +376,6 @@ const Dashboard = () => {
       .sort((a, b) => b.total - a.total);
     setGodownLoad(godownArray);
   }, [planningData]);
-
-  const handleRefresh = useCallback(() => {
-    refreshOrders();
-    refreshPlanning();
-  }, [refreshOrders, refreshPlanning]);
 
   // Build chart data
   const monthlyTrendData = useMemo(() => {
@@ -554,63 +599,97 @@ const Dashboard = () => {
     );
   };
 
-  // --- Loading Overlay ---
-  if (loading) {
-    return (
-      <div className="h-[88vh] flex flex-col items-center justify-center bg-[#F5F5F5] transition-all duration-300">
-        <div className="bg-white/80 p-12 rounded-[2rem] shadow-[0_32px_64px_-15px_rgba(0,0,0,0.08)] flex flex-col items-center gap-8 border border-white relative overflow-hidden group max-w-sm w-full mx-4">
-          <div className="absolute -top-12 -right-12 w-40 h-40 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-          <div className="absolute -bottom-12 -left-12 w-40 h-40 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-
-          <div className="relative">
-            <svg className="w-20 h-20 animate-spin" viewBox="0 0 50 50">
-              <circle
-                className="opacity-10"
-                cx="25"
-                cy="25"
-                r="20"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="3"
-                style={{ color: "var(--primary, #58cc02)" }}
-              />
-              <circle
-                className="opacity-100"
-                cx="25"
-                cy="25"
-                r="20"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="3"
-                strokeDasharray="90"
-                strokeDashoffset="70"
-                strokeLinecap="round"
-                style={{ color: "var(--primary, #58cc02)" }}
-              />
-            </svg>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="h-3 w-3 bg-primary rounded-full animate-pulse shadow-[0_0_15px_rgba(88,204,2,0.6)]"></div>
-            </div>
+  // --- Dashboard Skeleton Component ---
+  const DashboardSkeleton = () => (
+    <div className="min-h-screen bg-[#F5F5F5] p-3 sm:p-6 space-y-6">
+      {/* Header Skeleton */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between bg-white/70 backdrop-blur-sm p-6 rounded shadow-sm border border-white/50">
+        <div className="space-y-3">
+          <div className="h-2 w-24 bg-gray-200 rounded relative overflow-hidden">
+             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
           </div>
-
-          <div className="flex flex-col items-center text-center">
-            <h3 className="text-xl font-black text-gray-800 uppercase tracking-[0.4em] mb-2 drop-shadow-sm flex items-center justify-center">
-              Loading
-              <span className="inline-flex ml-1">
-                <span className="animate-bounce" style={{ animationDelay: "0s" }}>
-                  .
-                </span>
-                <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
-                <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
-              </span>
-            </h3>
-            <p className="text-[10px] text-gray-400 font-black uppercase tracking-[0.2em] bg-gray-50/50 px-4 py-1.5 rounded-full border border-gray-100 shadow-inner">
-              Synchronizing Dashboard
-            </p>
+          <div className="h-8 w-64 bg-gray-200 rounded relative overflow-hidden">
+             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+          </div>
+          <div className="h-4 w-48 bg-gray-100 rounded relative overflow-hidden">
+             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
           </div>
         </div>
+        <div className="h-10 w-40 bg-gray-200 rounded shrink-0 relative overflow-hidden">
+           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+        </div>
       </div>
-    );
+
+      {/* Stat Cards Skeleton */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="bg-white rounded border border-gray-100/50 p-5 shadow-sm h-28 relative overflow-hidden">
+             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+             <div className="h-3 w-20 bg-gray-100 rounded mb-4"></div>
+             <div className="h-8 w-16 bg-gray-200 rounded"></div>
+             <div className="absolute top-5 right-5 w-10 h-10 bg-primary/5 rounded"></div>
+          </div>
+        ))}
+      </div>
+
+      {/* Workflow Cards Skeleton */}
+      <div className="space-y-4">
+        <div className="h-6 w-40 bg-gray-200 rounded relative overflow-hidden px-2">
+           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="bg-white rounded border border-gray-100/50 p-5 shadow-sm h-56 relative overflow-hidden">
+               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+               <div className="flex gap-3 mb-6">
+                 <div className="w-10 h-10 bg-primary/5 rounded"></div>
+                 <div className="space-y-2 flex-1 pt-1">
+                   <div className="h-4 w-full bg-gray-200 rounded"></div>
+                   <div className="h-3 w-20 bg-gray-100 rounded"></div>
+                 </div>
+               </div>
+               <div className="grid grid-cols-2 gap-4 mb-6">
+                 <div className="h-14 bg-gray-50/80 rounded"></div>
+                 <div className="h-14 bg-gray-50/80 rounded"></div>
+               </div>
+               <div className="space-y-4">
+                 <div className="h-4 w-12 bg-gray-200 rounded mb-1"></div>
+                 <div className="h-2.5 w-full bg-gray-100 rounded-full"></div>
+               </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Charts Skeleton */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white rounded border border-white/50 p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] h-[400px] relative overflow-hidden">
+           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+           <div className="flex justify-between mb-6">
+             <div className="h-5 w-56 bg-gray-200 rounded"></div>
+             <div className="h-8 w-32 bg-gray-100 rounded"></div>
+           </div>
+           <div className="h-[300px] w-full bg-gray-50/30 rounded border border-gray-50"></div>
+        </div>
+        <div className="bg-white rounded border border-white/50 p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] h-[400px] relative overflow-hidden">
+           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+           <div className="h-5 w-48 bg-gray-200 rounded mb-6"></div>
+           <div className="space-y-4 pt-2 max-h-[300px] overflow-hidden">
+             {[...Array(6)].map((_, i) => (
+               <div key={i} className="flex gap-4 items-center">
+                 <div className="h-3 w-20 bg-gray-200 rounded"></div>
+                 <div className="h-8 flex-1 bg-gray-100 rounded"></div>
+               </div>
+             ))}
+           </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // --- Loading Overlay ---
+  if (loading) {
+    return <DashboardSkeleton />;
   }
 
   // --- Main Render ---

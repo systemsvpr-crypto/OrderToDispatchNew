@@ -1,10 +1,62 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { UserPlus, Shield, Check, X, Trash2, Pencil, RefreshCw, Loader, Save, Eye, EyeOff } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { UserPlus, Shield, X, Trash2, Pencil, RefreshCw, Loader, Save, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
-import { useDataSync } from '../../utils/useDataSync';
 
-const CACHE_KEY = 'settingsUserData';
-const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+// --- Skeleton Components ---
+const TableSkeleton = () => (
+  <>
+    {[...Array(5)].map((_, i) => (
+      <tr key={i} className="border-b border-gray-100">
+        {[...Array(4)].map((_, j) => (
+          <td key={j} className="px-6 py-5">
+            <div className="h-4 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+            {j === 0 && (
+              <div className="h-3 w-12 bg-gray-50 rounded-lg mt-2 relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+              </div>
+            )}
+          </td>
+        ))}
+      </tr>
+    ))}
+  </>
+);
+
+const MobileSkeleton = () => (
+  <div className="md:hidden mt-4 space-y-3">
+    {[...Array(4)].map((_, i) => (
+      <div key={i} className="bg-white p-4 rounded shadow-sm border border-gray-100 space-y-3">
+        <div className="flex justify-between items-start">
+          <div className="space-y-2 w-1/2">
+            <div className="h-4 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+            <div className="h-3 w-14 bg-gray-50 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <div className="h-8 w-8 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+            <div className="h-8 w-8 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {[...Array(3)].map((_, j) => (
+            <div key={j} className="h-5 w-16 bg-gray-50 rounded relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+);
 
 const Settings = () => {
     const [users, setUsers] = useState([]);
@@ -14,6 +66,9 @@ const Settings = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [editingUser, setEditingUser] = useState(null);
     const [userSearchTerm, setUserSearchTerm] = useState('');
+    const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const abortControllerRef = useRef(null);
     const { showToast } = useToast();
 
     const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
@@ -45,58 +100,65 @@ const Settings = () => {
         return undefined;
     };
 
-    // --- Cache helpers ---
-    const loadFromCache = useCallback(() => {
-        const cached = sessionStorage.getItem(CACHE_KEY);
-        if (!cached) return null;
+    // Fetch Users
+    const fetchAllUsers = useCallback(async (isRefresh = false) => {
+        if (abortControllerRef.current) abortControllerRef.current.abort();
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
+        if (isRefresh) setIsRefreshing(true);
+        else setIsLoading(true);
+
+        const MIN_DISPLAY_MS = 1500;
+        const minTimer = new Promise(resolve => setTimeout(resolve, MIN_DISPLAY_MS));
+
+        const doFetch = async () => {
+            const response = await fetch(
+                `${API_URL}?sheet=Login&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`,
+                { signal: controller.signal }
+            );
+            const result = await response.json();
+            if (result.success && Array.isArray(result.data)) {
+                const mapped = result.data.map((item, idx) => {
+                    const rawAccess = getVal(item, 'pageAccess', 'Access') || '';
+                    const pageAccess = Array.isArray(rawAccess)
+                        ? rawAccess
+                        : String(rawAccess).split(',').map(s => s.trim()).filter(Boolean);
+                    return {
+                        originalIndex: item.originalIndex || idx,
+                        name: item.name || getVal(item, 'userName', 'User Name') || '-',
+                        id: item.id || getVal(item, 'userId', 'User ID') || '-',
+                        password: item.password || '-',
+                        role: item.role || 'user',
+                        pageAccess
+                    };
+                });
+                return mapped.filter(u => u.id !== '-' && u.id !== 'User ID');
+            }
+            return [];
+        };
+
         try {
-            const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_DURATION) return data;
-        } catch (e) { /* ignore */ }
-        return null;
-    }, []);
-
-    const saveToCache = useCallback((data) => {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
-    }, []);
-
-    // Fetch Users - Stable Fetcher for Hook
-    const fetchUsers = useCallback(async () => {
-        const response = await fetch(`${API_URL}?sheet=Login&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
-        const result = await response.json();
-        if (result.success && Array.isArray(result.data)) {
-            const mapped = result.data.map((item, idx) => {
-                const rawAccess = getVal(item, 'pageAccess', 'Access') || '';
-                const pageAccess = Array.isArray(rawAccess)
-                    ? rawAccess
-                    : String(rawAccess).split(',').map(s => s.trim()).filter(Boolean);
-
-                return {
-                    originalIndex: item.originalIndex || idx,
-                    name: item.name || getVal(item, 'userName', 'User Name') || '-',
-                    id: item.id || getVal(item, 'userId', 'User ID') || '-',
-                    password: item.password || '-',
-                    role: item.role || 'user',
-                    pageAccess
-                };
-            });
-            return mapped.filter(u => u.id !== '-' && u.id !== 'User ID');
+            const [mapped] = await Promise.all([doFetch(), minTimer]);
+            if (!controller.signal.aborted) setUsers(mapped);
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                console.error('fetchAllUsers error:', error);
+                showToast('Failed to load users: ' + error.message, 'error');
+            }
+        } finally {
+            if (!controller.signal.aborted) {
+                setIsLoading(false);
+                setIsRefreshing(false);
+            }
         }
-        return [];
-    }, [API_URL, SHEET_ID]);
+    }, [API_URL, SHEET_ID, showToast]);
 
-    // --- Data Sync Hook ---
-    const { 
-        data: syncData, 
-        loading, 
-        refreshing, 
-        refresh 
-    } = useDataSync('User Settings Sync', fetchUsers, 'settingsCache', CACHE_DURATION);
-
-    // Sync hook data to local state
+    // Auto-fetch on mount
     useEffect(() => {
-        if (syncData) setUsers(syncData);
-    }, [syncData]);
+        fetchAllUsers();
+        return () => { if (abortControllerRef.current) abortControllerRef.current.abort(); };
+    }, [fetchAllUsers]);
 
     const filteredUsers = useMemo(() => {
         return users.filter(user =>
@@ -137,7 +199,7 @@ const Settings = () => {
             if (!result.success) throw new Error(result.error || 'Failed to save user');
 
             showToast(editingUser ? "User updated successfully" : "User added successfully");
-            await refresh();
+            await fetchAllUsers(true);
             setIsModalOpen(false);
             setEditingUser(null);
             setShowPassword(false);
@@ -181,7 +243,7 @@ const Settings = () => {
             if (!result.success) throw new Error(result.error || 'Failed to delete user');
 
             showToast("User removed", "error");
-            await refresh();
+            await fetchAllUsers(true);
         } catch (error) {
             console.error('Error deleting user:', error);
             showToast("Failed to delete: " + error.message, "error");
@@ -218,11 +280,11 @@ const Settings = () => {
 
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={() => refresh()}
-                        disabled={refreshing}
+                        onClick={() => fetchAllUsers(true)}
+                        disabled={isRefreshing}
                         className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                     >
-                        <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+                        <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
                         Refresh
                     </button>
                     <input
@@ -259,7 +321,14 @@ const Settings = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 text-sm">
-                            {filteredUsers.map((u) => (
+                            {isLoading ? (
+                                <TableSkeleton />
+                            ) : filteredUsers.length === 0 ? (
+                                <tr>
+                                    <td colSpan="4" className="px-6 py-12 text-center text-gray-400 italic font-bold text-sm">No users found. Try searching or refresh data.</td>
+                                </tr>
+                            ) : null}
+                            {!isLoading && filteredUsers.map((u) => (
                                 <tr key={u.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="px-6 py-4">
                                         <div className="font-bold text-gray-900">{u.name}</div>
@@ -301,18 +370,14 @@ const Settings = () => {
                                     </td>
                                 </tr>
                             ))}
-                            {filteredUsers.length === 0 && !loading && (
-                                <tr>
-                                    <td colSpan="4" className="px-6 py-12 text-center text-gray-500 italic">No users found. Try searching or refresh data.</td>
-                                </tr>
-                            )}
                         </tbody>
                     </table>
                 </div>
             </div>
 
             {/* Mobile View */}
-            <div className="md:hidden mt-4 space-y-3">
+            {isLoading ? <MobileSkeleton /> : (
+              <div className="md:hidden mt-4 space-y-3">
                 {filteredUsers.map(u => (
                     <div key={u.id} className="bg-white p-4 rounded shadow-sm border border-gray-100 space-y-3">
                         <div className="flex justify-between items-start">
@@ -336,37 +401,23 @@ const Settings = () => {
                         </div>
                     </div>
                 ))}
-            </div>
+              </div>
+            )}
 
-            {/* Loading overlay - first load or saving (background syncs are silent) */}
-            {(loading || isSaving) && (
-                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
-                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
-                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-                        <div className="relative">
-                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
-                                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
-                                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
-                            </svg>
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
-                            </div>
-                        </div>
-                        <div className="flex flex-col items-center text-center">
-                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
-                                {isSaving ? 'Saving' : 'Loading'}
-                                <span className="inline-flex ml-1">
-                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
-                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
-                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
-                                </span>
-                            </h3>
-                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
-                                {isSaving ? 'Updating Profile' : 'Syncing User Data'}
-                            </p>
-                        </div>
+            {/* Saving overlay */}
+            {isSaving && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/40 backdrop-blur-md">
+                    <div className="bg-white/80 p-10 rounded-3xl shadow-xl flex flex-col items-center gap-4 border border-white/50">
+                        <Loader className="w-10 h-10 animate-spin text-primary" />
+                        <p className="text-sm font-black text-gray-700 uppercase tracking-widest">Updating Profile...</p>
                     </div>
+                </div>
+            )}
+
+            {/* Refresh progress bar */}
+            {isRefreshing && (
+                <div className="fixed top-0 left-0 right-0 h-1 z-[101] bg-gray-100 overflow-hidden">
+                    <div className="h-full bg-primary animate-shimmer-fast" style={{ width: '40%' }}></div>
                 </div>
             )}
 

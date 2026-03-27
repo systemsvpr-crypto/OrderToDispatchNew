@@ -1,14 +1,61 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { X, Loader, Save, RefreshCcw, ChevronUp, ChevronDown } from 'lucide-react';
-import { useDataSync } from '../../utils/useDataSync';
 import { useToast } from '../../contexts/ToastContext';
 
-const CACHE_KEY = 'pcReportData';
-const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
+const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
+
+// --- Skeleton Components ---
+const TableSkeleton = () => (
+  <>
+    {[...Array(7)].map((_, i) => (
+      <tr key={i} className="border-b border-gray-100 last:border-0">
+        {[...Array(11)].map((_, j) => (
+          <td key={j} className="px-6 py-4">
+            <div className="h-4 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+        ))}
+      </tr>
+    ))}
+  </>
+);
+
+const MobileSkeleton = () => (
+  <div className="md:hidden mt-4 space-y-3">
+    {[...Array(4)].map((_, i) => (
+      <div key={i} className="p-4 bg-white rounded shadow-sm border border-gray-100 space-y-3">
+        <div className="flex justify-between items-start pb-2 border-b border-gray-50">
+          <div className="space-y-2 w-2/3">
+            <div className="h-3 w-1/3 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+            <div className="h-5 w-full bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </div>
+          <div className="h-7 w-16 bg-gray-100 rounded-lg relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {[...Array(4)].map((_, j) => (
+            <div key={j} className="h-4 bg-gray-50 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+);
 
 const PcReport = () => {
     const [items, setItems] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [modalOpen, setModalOpen] = useState(false);
     const [currentItem, setCurrentItem] = useState(null);
@@ -19,9 +66,7 @@ const PcReport = () => {
     });
     const { showToast } = useToast();
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
-
-    const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-    const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
+    const abortControllerRef = useRef(null);
 
     // Helper to get value from object regardless of key casing/spaces
     const getVal = (obj, ...possibleKeys) => {
@@ -50,12 +95,28 @@ const PcReport = () => {
         } catch { return dateStr; }
     };
 
+    // Fetcher
+    const fetchData = useCallback(async (isRefresh = false) => {
+        if (abortControllerRef.current) abortControllerRef.current.abort();
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
 
-    // Stable Fetcher
-    const fetchData = useCallback(async () => {
-        try {
-            const response = await fetch(`${API_URL}?sheet=PC Report&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
+        if (isRefresh) setIsRefreshing(true);
+        else setIsLoading(true);
+
+        const MIN_DISPLAY_MS = 1500;
+        const minTimer = new Promise(resolve => setTimeout(resolve, MIN_DISPLAY_MS));
+
+        const doFetch = async () => {
+            const url = new URL(API_URL);
+            url.searchParams.set('sheet', 'PC Report');
+            url.searchParams.set('mode', 'table');
+            if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+
+            const response = await fetch(url.toString(), { signal: controller.signal });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const result = await response.json();
+
             if (result.success && Array.isArray(result.data)) {
                 return result.data.map((item, idx) => ({
                     originalIndex: idx,
@@ -72,28 +133,32 @@ const PcReport = () => {
                 }));
             }
             return [];
+        };
+
+        try {
+            const [mapped] = await Promise.all([doFetch(), minTimer]);
+            if (!controller.signal.aborted) setItems(mapped);
         } catch (error) {
-            console.error('Error fetching data:', error);
-            return [];
+            if (error.name !== 'AbortError') {
+                console.error('Error fetching data:', error);
+                showToast('Error', 'Failed to load PC Report data: ' + error.message);
+            }
+        } finally {
+            if (!controller.signal.aborted) {
+                setIsLoading(false);
+                setIsRefreshing(false);
+            }
         }
-    }, [API_URL, SHEET_ID]);
+    }, [showToast]);
 
-
-    const {
-        data: fetchedItems,
-        loading: isLoading,
-        refreshing: isRefreshing,
-        refresh: refreshData
-    } = useDataSync('PC Report', fetchData, CACHE_KEY, CACHE_DURATION);
-
+    // Initial load on mount
     useEffect(() => {
-        if (fetchedItems) setItems(fetchedItems);
-    }, [fetchedItems]);
+        fetchData();
+        return () => { if (abortControllerRef.current) abortControllerRef.current.abort(); };
+    }, [fetchData]);
 
-    // Refresh Handler
-    const handleRefresh = useCallback(() => {
-        refreshData();
-    }, [refreshData]);
+    // Refresh handler
+    const handleRefresh = useCallback(() => fetchData(true), [fetchData]);
 
     // Sorting logic
     const requestSort = useCallback((key) => {
@@ -184,7 +249,8 @@ const PcReport = () => {
             // Add a small delay to allow Google Sheets to update formulas
             await new Promise(r => setTimeout(r, 1500));
             
-            await refreshData();
+            // Refresh data
+            await handleRefresh();
             setModalOpen(false);
         } catch (error) {
             console.error('Submit error:', error);
@@ -192,7 +258,7 @@ const PcReport = () => {
         } finally {
             setIsSaving(false);
         }
-    }, [currentItem, formData, API_URL, SHEET_ID, refreshData]);
+    }, [currentItem, formData, API_URL, SHEET_ID, handleRefresh, showToast]);
 
     return (
         <div className="">
@@ -202,7 +268,7 @@ const PcReport = () => {
                     onClick={handleRefresh}
                     className="flex items-center gap-1.5 px-3 py-2 bg-green-50 text-primary rounded hover:bg-green-100 transition-colors text-xs font-bold border border-green-100"
                 >
-                    <RefreshCcw size={14} className={isLoading ? 'animate-spin' : ''} />
+                    <RefreshCcw size={14} className={isRefreshing ? 'animate-spin' : ''} />
                     Refresh
                 </button>
                 <div className="flex-1" />
@@ -256,7 +322,12 @@ const PcReport = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 text-sm">
-                            {filteredAndSortedItems.map((item) => (
+                            {isLoading ? (
+                                <TableSkeleton />
+                            ) : filteredAndSortedItems.length === 0 ? (
+                                <tr><td colSpan="11" className="px-4 py-20 text-center text-gray-400 italic font-bold text-sm">No items found matching your criteria.</td></tr>
+                            ) : null}
+                            {!isLoading && filteredAndSortedItems.map((item) => (
                                 <tr key={item.originalIndex} className="hover:bg-gray-50">
                                     <td className="px-6 py-4 sticky left-0 bg-white hover:bg-gray-50 z-1 border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.05)] text-center">
                                         <button onClick={() => openReportModal(item)} className="px-3 py-1 bg-primary text-white rounded-md text-xs font-medium hover:bg-primary-hover transition-colors">Update</button>
@@ -277,16 +348,14 @@ const PcReport = () => {
                                     <td className="px-6 py-4 text-gray-600">{item.remarks}</td>
                                 </tr>
                             ))}
-                            {filteredAndSortedItems.length === 0 && (
-                                <tr><td colSpan="11" className="px-4 py-20 text-center text-gray-500 italic">No items found matching your criteria.</td></tr>
-                            )}
                         </tbody>
                     </table>
                 </div>
             </div>
 
             {/* Mobile View */}
-            <div className="md:hidden mt-4 space-y-3">
+            {isLoading ? <MobileSkeleton /> : (
+              <div className="md:hidden mt-4 space-y-3">
                 {filteredAndSortedItems.map((item) => (
                     <div key={item.originalIndex} className="p-4 bg-white rounded shadow-sm border border-gray-100 space-y-3">
                         <div className="flex justify-between items-start border-b border-gray-50 pb-2">
@@ -305,39 +374,27 @@ const PcReport = () => {
                         </div>
                     </div>
                 ))}
-            </div>
+              </div>
+            )}
 
-            {(isLoading || isSaving) && (
-                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
-                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
-                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-                        <div className="relative">
-                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
-                                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
-                                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
-                            </svg>
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
-                            </div>
-                        </div>
-                        <div className="flex flex-col items-center text-center">
-                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
-                                {isSaving ? 'Saving' : 'Loading'}
-                                <span className="inline-flex ml-1">
-                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
-                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
-                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
-                                </span>
-                            </h3>
-                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
-                                {isSaving ? 'Updating Report' : 'Syncing Report Data'}
-                            </p>
-                        </div>
+            {/* Saving Overlay */}
+            {isSaving && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/40 backdrop-blur-md">
+                    <div className="bg-white/80 p-10 rounded-3xl shadow-xl flex flex-col items-center gap-4 border border-white/50">
+                        <Loader className="w-10 h-10 animate-spin text-primary" />
+                        <p className="text-sm font-black text-gray-700 uppercase tracking-widest">Updating Report...</p>
                     </div>
                 </div>
             )}
 
+            {/* Refresh progress bar */}
+            {isRefreshing && (
+                <div className="fixed top-0 left-0 right-0 h-1 z-[101] bg-gray-100 overflow-hidden">
+                    <div className="h-full bg-primary animate-shimmer-fast" style={{ width: '40%' }}></div>
+                </div>
+            )}
+
+            {/* Modal */}
             {modalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
                     <div className="bg-white rounded shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-300">

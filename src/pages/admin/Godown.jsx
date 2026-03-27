@@ -1,15 +1,33 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Loader, X, Filter, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
-import { useDataSync } from '../../utils/useDataSync';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Filter, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
+import { useToast } from '../../contexts/ToastContext';
 
-const CACHE_KEY = 'godownData';
-const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+// --- Skeleton for table rows ---
+const TableSkeleton = () => (
+  <>
+    {[...Array(7)].map((_, i) => (
+      <tr key={i} className="border-b border-gray-100 last:border-0">
+        {[...Array(9)].map((_, j) => (
+          <td key={j} className="px-6 py-4">
+            <div className="h-4 bg-gray-100 rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            </div>
+          </td>
+        ))}
+      </tr>
+    ))}
+  </>
+);
 
 const Godown = () => {
     const [items, setItems] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [godownFilter, setGodownFilter] = useState('All');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const abortControllerRef = useRef(null);
+    const { showToast } = useToast();
 
     const godownTabs = ['All', 'darba', 'DP', 'dusera', 'godown'];
 
@@ -42,44 +60,69 @@ const Godown = () => {
         } catch { return dateStr; }
     };
 
-    // Fetch Planning data - Stable Fetcher for Hook
-    const fetchPlanning = useCallback(async () => {
-        const response = await fetch(`${API_URL}?sheet=Planning&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
-        const result = await response.json();
-        if (result.success && Array.isArray(result.data)) {
-            return result.data.slice(3).map(item => ({
-                originalIndex: item.originalIndex,
-                dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No') || '-',
-                dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date') || '-',
-                orderNo: getVal(item, 'orderNumber', 'Order No', 'Order Number') || '-',
-                customerName: getVal(item, 'clientName', 'Customer', 'Customer Name') || '-',
-                productName: getVal(item, 'itemName', 'Product', 'Product Name') || '-',
-                orderQty: getVal(item, 'qty', 'Order Qty') || '0',
-                dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty') || '0',
-                godown: getVal(item, 'godownName', 'Godown') || '-',
-                gstIncluded: getVal(item, 'gstIncluded', 'GST Included') || '-'
-            }));
+    // Fetch Planning data
+    const fetchPlanning = useCallback(async (isRefresh = false) => {
+        if (abortControllerRef.current) abortControllerRef.current.abort();
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
+        if (isRefresh) setIsRefreshing(true);
+        else setIsLoading(true);
+
+        const MIN_DISPLAY_MS = 1500;
+        const minTimer = new Promise(resolve => setTimeout(resolve, MIN_DISPLAY_MS));
+
+        const doFetch = async () => {
+            const url = new URL(API_URL);
+            url.searchParams.set('sheet', 'Planning');
+            url.searchParams.set('mode', 'table');
+            if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+
+            const response = await fetch(url.toString(), { signal: controller.signal });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const result = await response.json();
+
+            if (result.success && Array.isArray(result.data)) {
+                return result.data.slice(3).map((item, idx) => ({
+                    originalIndex: idx,
+                    dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No') || '-',
+                    dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date') || '-',
+                    orderNo: getVal(item, 'orderNumber', 'Order No', 'Order Number') || '-',
+                    customerName: getVal(item, 'clientName', 'Customer', 'Customer Name') || '-',
+                    productName: getVal(item, 'itemName', 'Product', 'Product Name') || '-',
+                    orderQty: getVal(item, 'qty', 'Order Qty') || '0',
+                    dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty') || '0',
+                    godown: getVal(item, 'godownName', 'Godown') || '-',
+                    gstIncluded: getVal(item, 'gstIncluded', 'GST Included') || '-'
+                }));
+            }
+            return [];
+        };
+
+        try {
+            const [mapped] = await Promise.all([doFetch(), minTimer]);
+            if (!controller.signal.aborted) setItems(mapped);
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                console.error('Error fetching planning data:', error);
+                showToast('Error', 'Failed to load warehouse data: ' + error.message);
+            }
+        } finally {
+            if (!controller.signal.aborted) {
+                setIsLoading(false);
+                setIsRefreshing(false);
+            }
         }
-        return [];
-    }, [API_URL, SHEET_ID]);
+    }, [API_URL, SHEET_ID, showToast]);
 
-    // --- Data Sync Hook ---
-    const { 
-        data: syncData, 
-        loading, 
-        refreshing, 
-        refresh 
-    } = useDataSync('Godown Management Sync', fetchPlanning, 'godownCache', CACHE_DURATION);
-
-    // Sync hook data to local state
+    // Initial load on mount
     useEffect(() => {
-        if (syncData) setItems(syncData);
-    }, [syncData]);
+        fetchPlanning();
+        return () => { if (abortControllerRef.current) abortControllerRef.current.abort(); };
+    }, [fetchPlanning]);
 
     // Manual Refresh
-    const handleRefresh = useCallback(() => {
-        refresh();
-    }, [refresh]);
+    const handleRefresh = useCallback(() => fetchPlanning(true), [fetchPlanning]);
 
     // Sorting logic
     const requestSort = (key) => {
@@ -141,10 +184,10 @@ const Godown = () => {
                 <div className="flex items-center gap-3">
                     <button
                         onClick={handleRefresh}
-                        disabled={refreshing}
+                        disabled={isRefreshing}
                         className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-xs font-bold border border-gray-200 disabled:opacity-50"
                     >
-                        <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+                        <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
                         Refresh
                     </button>
                     <div className="relative w-full sm:w-64">
@@ -208,10 +251,17 @@ const Godown = () => {
                                         </div>
                                     </th>
                                 ))}
-                            </tr>
+                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 text-sm">
-                            {filteredAndSortedItems.map((item, idx) => (
+                            {isLoading ? (
+                                <TableSkeleton />
+                            ) : filteredAndSortedItems.length === 0 ? (
+                                <tr>
+                                    <td colSpan="9" className="px-4 py-20 text-center text-gray-400 italic font-bold text-sm">No entries found for this selection.</td>
+                                </tr>
+                            ) : null}
+                            {!isLoading && filteredAndSortedItems.map((item, idx) => (
                                 <tr key={idx} className="hover:bg-gray-50">
                                     <td className="px-6 py-4 font-semibold text-gray-900">{item.dispatchNo}</td>
                                     <td className="px-6 py-4 text-gray-600 text-xs text-center">{formatDisplayDate(item.dispatchDate)}</td>
@@ -224,44 +274,18 @@ const Godown = () => {
                                     <td className="px-6 py-4 text-gray-600 text-center">{item.gstIncluded}</td>
                                 </tr>
                             ))}
-                            {filteredAndSortedItems.length === 0 && (
-                                <tr>
-                                    <td colSpan="9" className="px-4 py-20 text-center text-gray-500 italic">No entries found for this selection.</td>
-                                </tr>
+                            {filteredAndSortedItems.length === 0 && !isLoading && (
+                                <tr><td colSpan="9" className="px-4 py-20 text-center text-gray-500 italic">No entries found.</td></tr>
                             )}
                         </tbody>
                     </table>
                 </div>
             </div>
-            {/* Loading overlay - first load only (background syncs are silent) */}
-            {loading && (
-                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/40 backdrop-blur-md transition-all duration-300">
-                    <div className="bg-white/80 p-10 rounded-3xl shadow-[0_32px_64px_-15px_rgba(0,0,0,0.1)] flex flex-col items-center gap-6 border border-white/50 relative overflow-hidden group">
-                        <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-                        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500"></div>
-                        <div className="relative">
-                            <svg className="w-16 h-16 animate-spin" viewBox="0 0 50 50">
-                                <circle className="opacity-20" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" style={{ color: 'var(--primary, #58cc02)' }} />
-                                <circle className="opacity-100" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="80" strokeDashoffset="60" strokeLinecap="round" style={{ color: 'var(--primary, #58cc02)' }} />
-                            </svg>
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="h-2 w-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(88,204,2,0.5)]"></div>
-                            </div>
-                        </div>
-                        <div className="flex flex-col items-center text-center">
-                            <h3 className="text-lg font-black text-gray-800 uppercase tracking-[0.3em] mb-1 drop-shadow-sm flex items-center">
-                                Loading
-                                <span className="inline-flex ml-1">
-                                    <span className="animate-bounce" style={{ animationDelay: '0s' }}>.</span>
-                                    <span className="animate-bounce [animation-delay:0.2s] ml-0.5">.</span>
-                                    <span className="animate-bounce [animation-delay:0.4s] ml-0.5">.</span>
-                                </span>
-                            </h3>
-                            <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider bg-gray-50 px-3 py-1 rounded-full border border-gray-100 shadow-inner">
-                                Syncing Warehouse Data
-                            </p>
-                        </div>
-                    </div>
+
+            {/* Refresh progress bar */}
+            {isRefreshing && (
+                <div className="fixed top-0 left-0 right-0 h-1 z-[101] bg-gray-100 overflow-hidden">
+                    <div className="h-full bg-primary animate-shimmer-fast" style={{ width: '40%' }}></div>
                 </div>
             )}
         </div>
