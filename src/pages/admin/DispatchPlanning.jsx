@@ -321,6 +321,8 @@ const DispatchPlanning = () => {
           supabase.from('app_orders').update({ qty: newOrderTotal }).eq('id', order.id)
         );
 
+
+        
         // 2. Prepare History Record
         currentMaxNo++;
         cancelRecords.push({
