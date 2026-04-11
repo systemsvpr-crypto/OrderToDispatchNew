@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { CheckCircle, History, Save, ChevronDown, ChevronUp, RefreshCw, ClipboardList, X } from 'lucide-react';
+import { CheckCircle, History, Save, ChevronDown, ChevronUp, RefreshCw, ClipboardList, X, XCircle } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import { useToast } from '../../contexts/ToastContext';
+import { supabase } from '../../supabaseClient';
 
 // --- Constants ---
 const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
@@ -87,185 +88,85 @@ const DispatchComplete = () => {
     if (isRefresh) setRefreshingOrders(true);
     else setLoadingOrders(true);
 
-    if (pendingAbortRef.current) {
-      pendingAbortRef.current.abort();
-    }
-    const controller = new AbortController();
-    pendingAbortRef.current = controller;
-
     try {
-      const url = new URL(API_URL);
-      url.searchParams.set('sheet', 'Planning');
-      url.searchParams.set('mode', 'table');
-      if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+      // Fetch plans that are NOT yet completed
+      const { data, error } = await supabase
+        .from('dispatch_plans')
+        .select(`
+          *,
+          order:app_orders(*)
+        `)
+        .eq('dispatch_completed', false)
+        .eq('informed_before_dispatch', true) // Only show items AFTER they are notified before dispatch
+        .order('created_at', { ascending: false });
 
-      const response = await fetch(url.toString(), { signal: controller.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const text = await response.text();
-      let result;
-      try { result = JSON.parse(text); } catch (e) { throw new Error('Invalid JSON response'); }
+      if (error) throw error;
 
-      let dataArray = [];
-      if (Array.isArray(result)) dataArray = result;
-      else if (result.success && Array.isArray(result.data)) dataArray = result.data;
-      else if (result.data && Array.isArray(result.data)) dataArray = result.data;
-      else if (result.rows && Array.isArray(result.rows)) dataArray = result.rows;
-
-      if (!dataArray.length) {
-        setOrders([]);
-        return;
-      }
-
-      const hasHeaders = Array.isArray(dataArray[0]) &&
-        (String(dataArray[0][0]).toLowerCase().includes('dispatch') ||
-         String(dataArray[0][1]).toLowerCase().includes('no'));
-
-      const processArray = hasHeaders ? dataArray.slice(1) : dataArray;
-      const mapped = processArray.slice(3)
-        .map((item, idx) => {
-          if (Array.isArray(item)) {
-            return {
-              originalIndex: idx,
-              dispatchNo: item[0] || '-',
-              dispatchDate: item[1] || '-',
-              orderNumber: item[2] || '-',
-              clientName: item[3] || '-',
-              itemName: item[4] || '-',
-              godownName: item[5] || '-',
-              qty: item[6] || '0',
-              dispatchQty: item[7] || '0',
-              crmName: item[8] || '-',
-              columnO: item[14] || '',
-              columnP: item[15] || '',
-              sheetRow: item[9] || (idx + (hasHeaders ? 2 : 1)),
-              status: getVal(item, 'status', 'Status', 17) || ''
-            };
-          } else {
-            return {
-              ...item,
-              originalIndex: idx,
-              dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No'),
-              dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date'),
-              orderNumber: getVal(item, 'orderNumber', 'orderNo', 'Order No'),
-              clientName: getVal(item, 'clientName', 'customer', 'Customer Name', 'Client Name'),
-              itemName: getVal(item, 'itemName', 'product', 'Product Name', 'Item Name'),
-              godownName: getVal(item, 'godownName', 'godown', 'Godown Name'),
-              qty: getVal(item, 'qty', 'orderQty', 'Order Qty'),
-              dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty'),
-              crmName: getVal(item, 'crmName', 'CRM Name'),
-              columnO: getVal(item, 'columnO', 'O'),
-              columnP: getVal(item, 'columnP', 'P'),
-              status: String(getVal(item, 'status', 'Status') || '').toLowerCase(),
-              sheetRow: getVal(item, 'sheetRow', 'row')
-            };
-          }
-        })
-        .filter(item => {
-          const colOValue = String(item.columnO || '').trim();
-          const colPValue = String(item.columnP || '').trim();
-          const bothNotNull = colOValue !== '' && colOValue !== '-' && colPValue !== '' && colPValue !== '-';
-          return !bothNotNull;
-        });
+      const mapped = (data || []).map((item, idx) => ({
+        id: item.id, 
+        order_id: item.order_id,
+        dispatchNo: item.dispatch_number || '-',
+        dispatchDate: item.planned_date || '-',
+        orderNumber: item.order?.order_number || '-',
+        clientName: item.order?.client_name || '-',
+        itemName: item.order?.item_name || '-',
+        godownName: item.godown_name || '-',
+        qty: item.order?.qty || '0',
+        dispatchQty: item.planned_qty || '0',
+        crmName: item.order?.submittedby || '-',
+        originalIndex: idx
+      }));
 
       setOrders(mapped);
     } catch (error) {
-      if (error.name !== 'AbortError') {
-        console.error('fetchPendingOrders error:', error);
-        showToast('Error', 'Failed to load pending orders: ' + error.message);
-      }
+      console.error('fetchPendingOrders error:', error);
+      showToast('Error', 'Failed to load pending dispatches: ' + error.message);
     } finally {
-      if (!controller.signal.aborted) {
-        setLoadingOrders(false);
-        setRefreshingOrders(false);
-      }
+      setLoadingOrders(false);
+      setRefreshingOrders(false);
     }
-  }, [API_URL, SHEET_ID, showToast]);
+  }, [showToast]);
 
   // --- Fetch history from Dispatch Completed sheet ---
   const fetchHistory = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshingHistory(true);
     else setLoadingHistory(true);
 
-    if (historyAbortRef.current) {
-      historyAbortRef.current.abort();
-    }
-    const controller = new AbortController();
-    historyAbortRef.current = controller;
-
     try {
-      const url = new URL(API_URL);
-      url.searchParams.set('sheet', 'Dispatch Completed');
-      url.searchParams.set('mode', 'table');
-      if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+      const { data, error } = await supabase
+        .from('dispatch_plans')
+        .select(`
+          *,
+          order:app_orders(*)
+        `)
+        .eq('dispatch_completed', true)
+        .order('completed_at', { ascending: false });
 
-      const response = await fetch(url.toString(), { signal: controller.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const text = await response.text();
-      let result;
-      try { result = JSON.parse(text); } catch (e) { throw new Error('Invalid JSON response'); }
+      if (error) throw error;
 
-      let dataArray = [];
-      if (Array.isArray(result)) dataArray = result;
-      else if (result.success && Array.isArray(result.data)) dataArray = result.data;
-      else if (result.data && Array.isArray(result.data)) dataArray = result.data;
-      else if (result.rows && Array.isArray(result.rows)) dataArray = result.rows;
+      const mapped = (data || []).map(item => ({
+        id: item.id,
+        dispatchNo: item.dispatch_number || '-',
+        dispatchDate: item.planned_date || '-',
+        orderNumber: item.order?.order_number || '-',
+        clientName: item.order?.client_name || '-',
+        itemName: item.order?.item_name || '-',
+        godownName: item.godown_name || '-',
+        qty: item.order?.qty || '0',
+        dispatchQty: item.planned_qty || '0',
+        crmName: item.order?.submittedby || '-',
+        completedAt: item.completed_at
+      }));
 
-      if (!dataArray.length) {
-        setHistoryItems([]);
-        return;
-      }
-
-      const hasHeaders = Array.isArray(dataArray[0]) &&
-        (String(dataArray[0][0]).toLowerCase().includes('planning') ||
-         String(dataArray[0][1]).toLowerCase().includes('dispatch') ||
-         String(dataArray[0][0]).toLowerCase().includes('dispatch'));
-
-      const processArray = hasHeaders ? dataArray.slice(1) : dataArray;
-      const mapped = processArray.map((item, idx) => {
-        if (Array.isArray(item)) {
-          return {
-            originalIndex: idx,
-            dispatchNo: item[1] || '-',
-            dispatchDate: item[2] || '-',
-            completeDate: item[3] || '-',
-            customer: item[4] || '-',
-            product: item[5] || '-',
-            godown: item[6] || '-',
-            orderQty: item[7] || '0',
-            dispatchQty: item[8] || '0',
-            status: item[9] || 'approved',
-            crmName: item[10] || '-'
-          };
-        } else {
-          return {
-            ...item,
-            originalIndex: idx,
-            dispatchNo: getVal(item, 'dispatchNo', 'Dispatch No'),
-            dispatchDate: getVal(item, 'dispatchDate', 'Dispatch Date'),
-            completeDate: getVal(item, 'completeDate', 'Complete Date', 'Date'),
-            customer: getVal(item, 'customer', 'Customer', 'Customer Name'),
-            product: getVal(item, 'product', 'Product', 'Product Name'),
-            godown: getVal(item, 'godown', 'Godown Name', 'Godown'),
-            orderQty: getVal(item, 'orderQty', 'Order Qty'),
-            dispatchQty: getVal(item, 'dispatchQty', 'Dispatch Qty'),
-            status: getVal(item, 'status', 'Status'),
-            crmName: getVal(item, 'crmName', 'CRM Name')
-          };
-        }
-      });
       setHistoryItems(mapped);
     } catch (error) {
-      if (error.name !== 'AbortError') {
-        console.error('fetchHistory error:', error);
-        showToast('Error', 'Failed to load history: ' + error.message);
-      }
+      console.error('fetchHistory error:', error);
+      showToast('Error', 'Failed to load history: ' + error.message);
     } finally {
-      if (!controller.signal.aborted) {
-        setLoadingHistory(false);
-        setRefreshingHistory(false);
-      }
+      setLoadingHistory(false);
+      setRefreshingHistory(false);
     }
-  }, [API_URL, SHEET_ID, showToast]);
+  }, [showToast]);
 
   // Initial load on mount
   useEffect(() => {
@@ -330,11 +231,11 @@ const DispatchComplete = () => {
 
   // --- Memoized unique values for filters ---
   const allUniqueClients = useMemo(() =>
-    [...new Set([...(orders || []).map(o => o.clientName), ...(historyItems || []).map(h => h.customer)])].sort(),
+    [...new Set([...(orders || []).map(o => o.clientName), ...(historyItems || []).map(h => h.clientName)])].sort(),
     [orders, historyItems]
   );
   const allUniqueGodowns = useMemo(() =>
-    [...new Set([...(orders || []).map(o => o.godownName), ...(historyItems || []).map(h => h.godown)])].sort(),
+    [...new Set([...(orders || []).map(o => o.godownName), ...(historyItems || []).map(h => h.godownName)])].sort(),
     [orders, historyItems]
   );
 
@@ -388,14 +289,98 @@ const DispatchComplete = () => {
     [orders, searchTerm, clientFilter, godownFilter, getSortedItems]
   );
 
+  const handleCancelDispatch = async (item) => {
+    const cancelQtyStr = window.prompt(`Enter quantity to CANCEL for ${item.dispatchNo} (Max: ${item.dispatchQty}):`, item.dispatchQty);
+    if (cancelQtyStr === null) return;
+
+    const qtyToCancel = parseFloat(cancelQtyStr);
+    const currentQty = parseFloat(item.dispatchQty);
+
+    if (isNaN(qtyToCancel) || qtyToCancel <= 0) {
+      showToast('Error', 'Please enter a valid quantity');
+      return;
+    }
+
+    if (qtyToCancel > currentQty + 0.001) {
+      showToast('Error', 'Cannot cancel more than the planned quantity');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      // 1. Permanently REDUCE the qty in the app_orders table for EVERY cancellation
+      const targetOrderId = item.order_id;
+      const { data: currentOrder } = await supabase.from('app_orders').select('qty').eq('id', targetOrderId).single();
+      const newOrderTotal = (parseFloat(currentOrder?.qty) || 0) - qtyToCancel;
+      
+      const { error: ordErr } = await supabase
+        .from('app_orders')
+        .update({ qty: newOrderTotal })
+        .eq('id', targetOrderId);
+      if (ordErr) throw ordErr;
+
+
+      if (Math.abs(qtyToCancel - currentQty) < 0.001) {
+        // FULL CANCEL
+        const { error } = await supabase
+          .from('dispatch_plans')
+          .update({
+            status: 'Canceled',
+            dispatch_completed: true,
+            informed_after_dispatch: true
+          })
+          .eq('id', item.id);
+        if (error) throw error;
+      } else {
+        // PARTIAL CANCEL (Split)
+        const newQty = currentQty - qtyToCancel;
+        
+        // 2. Update current plan with reduced quantity
+        const { error: upErr } = await supabase
+          .from('dispatch_plans')
+          .update({ planned_qty: newQty })
+          .eq('id', item.id);
+        if (upErr) throw upErr;
+
+        // 3. Create new "Canceled" plan for the remainder tracking
+        const { data: plans } = await supabase.from('dispatch_plans').select('dispatch_number');
+        const maxNo = (plans || []).reduce((max, p) => {
+          const n = parseInt(String(p.dispatch_number).replace('DSP', ''), 10);
+          return isNaN(n) ? max : Math.max(max, n);
+        }, 1000);
+        
+        const { error: inErr } = await supabase.from('dispatch_plans').insert({
+          order_id: targetOrderId,
+          dispatch_number: `DSP${maxNo + 1}-CXL`,
+          planned_qty: qtyToCancel,
+          planned_date: item.dispatchDate,
+          godown_name: item.godownName,
+          status: 'Canceled',
+          dispatch_completed: true,
+          informed_before_dispatch: true,
+          informed_after_dispatch: true
+        });
+        if (inErr) throw inErr;
+      }
+
+      showToast('Order quantity reduced and dispatch cancellation processed', 'success');
+      await fetchPendingOrders(true);
+    } catch (err) {
+      console.error(err);
+      showToast('Error', err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const filteredAndSortedHistory = useMemo(() =>
     getSortedItems(
       (historyItems || []).filter(item => {
         const matchesSearch = Object.values(item).some(val =>
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
         );
-        const matchesClient = clientFilter === '' || item.customer === clientFilter;
-        const matchesGodown = godownFilter === '' || item.godown === godownFilter;
+        const matchesClient = clientFilter === '' || item.clientName === clientFilter;
+        const matchesGodown = godownFilter === '' || item.godownName === godownFilter;
         return matchesSearch && matchesClient && matchesGodown;
       })
     ),
@@ -403,34 +388,95 @@ const DispatchComplete = () => {
   );
 
   // --- Actions ---
-  const handleCheckboxToggle = useCallback((realIdx, item) => {
-    setSelectedRows(prev => {
-      const isSelected = !prev[realIdx];
-      const next = { ...prev, [realIdx]: isSelected };
-      if (isSelected) {
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-        setEditData(prevEdit => ({
-          ...prevEdit,
-          [realIdx]: {
-            product: item.itemName,
-            godown: item.godownName,
-            dispatchQty: item.dispatchQty,
-            completeDate: yesterdayStr,
-            status: 'Completed'
-          }
-        }));
-      } else {
-        setEditData(prevEdit => {
-          const newEditData = { ...prevEdit };
-          delete newEditData[realIdx];
-          return newEditData;
-        });
-      }
-      return next;
-    });
+  const handleCheckboxToggle = useCallback((id) => {
+    setSelectedRows(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
   }, []);
+
+  const handleBulkCancelDispatch = async () => {
+    const selectedIds = Object.keys(selectedRows).filter(id => selectedRows[id]);
+    if (selectedIds.length === 0) return;
+
+    if (!window.confirm(`Are you sure you want to permanently CANCEL and REDUCE the quantity for these ${selectedIds.length} dispatches?`)) return;
+
+    setIsSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const { data: plansData } = await supabase.from('dispatch_plans').select('dispatch_number');
+      let currentMaxNo = (plansData || []).reduce((max, p) => {
+        const n = parseInt(String(p.dispatch_number).replace('DSP', ''), 10);
+        return isNaN(n) ? max : Math.max(max, n);
+      }, 1000);
+
+      for (const id of selectedIds) {
+        const item = orders.find(o => o.id === id);
+        if (!item) continue;
+
+        const qtyToCancel = editData[id]?.dispatchQty !== undefined 
+          ? parseFloat(editData[id].dispatchQty) 
+          : parseFloat(item.dispatchQty);
+        
+        const currentQty = parseFloat(item.dispatchQty);
+
+        // 1. FIRST: Create History Record / Update Status
+        if (Math.abs(qtyToCancel - currentQty) < 0.001) {
+          // FULL CANCEL
+          const { error: updErr } = await supabase
+            .from('dispatch_plans')
+            .update({
+              status: 'Canceled',
+              dispatch_completed: true,
+              informed_after_dispatch: true
+            })
+            .eq('id', item.id);
+          if (updErr) throw updErr;
+        } else {
+          // PARTIAL CANCEL (Split)
+          const newQty = currentQty - qtyToCancel;
+          const { error: upErr } = await supabase.from('dispatch_plans').update({ planned_qty: newQty }).eq('id', item.id);
+          if (upErr) throw upErr;
+          
+          currentMaxNo++;
+          const { error: insErr } = await supabase.from('dispatch_plans').insert({
+            order_id: targetOrderId,
+            dispatch_number: `DSP${currentMaxNo}-CXL`,
+            planned_qty: qtyToCancel,
+            planned_date: item.dispatchDate,
+            godown_name: item.godownName,
+            status: 'Canceled',
+            gst_included: item.gstIncluded || 'No',
+            dispatch_completed: true,
+            informed_before_dispatch: true,
+            informed_after_dispatch: true
+          });
+          if (insErr) throw insErr;
+        }
+
+        // 2. ONLY IF SUCCESSFUL: Permanently REDUCE the qty in the app_orders table
+        const targetOrderId = item.order_id;
+        const { data: currentOrder } = await supabase.from('app_orders').select('qty').eq('id', targetOrderId).single();
+        const newOrderTotal = (parseFloat(currentOrder?.qty) || 0) - qtyToCancel;
+        
+        const { error: ordErr } = await supabase
+          .from('app_orders')
+          .update({ qty: newOrderTotal })
+          .eq('id', targetOrderId);
+        if (ordErr) throw ordErr;
+      }
+
+      showToast('Selected dispatches reduced/canceled successfully', 'success');
+      await fetchPendingOrders(true);
+      setSelectedRows({});
+      setEditData({});
+    } catch (err) {
+      console.error(err);
+      showToast('Error during bulk cancel', err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleEditChange = useCallback((idx, field, value) => {
     setEditData(prev => ({
@@ -439,64 +485,75 @@ const DispatchComplete = () => {
     }));
   }, []);
 
-  const handleSave = useCallback(async () => {
-    const rowsToSubmit = [];
-    Object.keys(selectedRows).forEach(idxStr => {
-      const idx = parseInt(idxStr);
-      if (selectedRows[idx]) {
-        const originalItem = (orders || []).find(o => o.originalIndex === idx);
-        if (!originalItem) return;
-        const edit = editData[idx] || {};
-        rowsToSubmit.push({
-          planningRowNumber: originalItem.sheetRow,
-          dispatchNo: originalItem.dispatchNo,
-          dispatchDate: formatDateToYYYYMMDD(originalItem.dispatchDate),
-          completeDate: formatDateToYYYYMMDD(edit.completeDate || (() => {
-            const d = new Date();
-            d.setDate(d.getDate() - 1);
-            return d;
-          })()),
-          customer: originalItem.clientName,
-          product: edit.product || originalItem.itemName,
-          godown: edit.godown || originalItem.godownName,
-          orderQty: originalItem.qty,
-          dispatchQty: edit.dispatchQty || originalItem.dispatchQty,
-          status: edit.status || 'Completed',
-          crmName: originalItem.crmName
-        });
-      }
-    });
-
-    if (rowsToSubmit.length === 0) return;
+  const handleSave = async () => {
+    const selectedIds = Object.keys(selectedRows).filter(id => selectedRows[id]);
+    if (selectedIds.length === 0) return;
 
     setIsSaving(true);
     try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          sheet: 'Dispatch Completed',
-          rows: rowsToSubmit,
-          sheetId: SHEET_ID
-        })
+      const now = new Date().toISOString();
+      const rowsToLog = [];
+      const updates = [];
+
+      // 1. Prepare updates and log entries for each selected dispatch
+      selectedIds.forEach(id => {
+          const item = orders.find(o => o.id === id);
+          if (item) {
+              // Priority: edited quantity > original planned quantity
+              const finalQty = editData[item.id]?.dispatchQty !== undefined 
+                ? parseInt(editData[item.id].dispatchQty, 10) 
+                : parseInt(item.dispatchQty, 10);
+
+              rowsToLog.push({
+                  dispatch_id: item.id,
+                  dispatch_number: item.dispatchNo,
+                  dispatch_date: item.dispatchDate,
+                  complete_date: now.split('T')[0],
+                  client_name: item.clientName,
+                  product_name: item.itemName,
+                  godown_name: item.godownName,
+                  order_qty: parseInt(item.qty, 10),
+                  dispatch_qty: finalQty,
+                  crm_name: item.crmName,
+                  status: 'Completed'
+              });
+
+              // Add a specific promise to update this individual plan's quantity and status
+              updates.push(
+                supabase
+                  .from('dispatch_plans')
+                  .update({
+                      planned_qty: finalQty, // Update the plan with the FINAL shipped quantity
+                      dispatch_completed: true,
+                      completed_at: now,
+                      status: 'Completed'
+                  })
+                  .eq('id', item.id)
+              );
+          }
       });
-      const result = await response.json();
-      if (result.success) {
-        showToast('Dispatch status updated successfully!', 'success');
-        await fetchPendingOrders(true);
-        await fetchHistory(true);
-        setSelectedRows({});
-        setEditData({});
-      } else {
-        showToast(`Error saving: ${result.error || 'Unknown error'}`, 'error');
-      }
+
+      // 2. Perform all updates and log entry insertion
+      const [logRes, ...otherRes] = await Promise.all([
+        supabase.from('dispatch_completed_log').insert(rowsToLog),
+        ...updates
+      ]);
+
+      if (logRes.error) throw logRes.error;
+      otherRes.forEach(res => { if (res.error) throw res.error; });
+
+      showToast('Dispatch marked as completed and updated!', 'success');
+      setSelectedRows({});
+      setEditData({});
+      await fetchPendingOrders(true);
+      await fetchHistory(true);
     } catch (error) {
       console.error('Save failed:', error);
-      showToast(`Failed to save dispatch completion: ${error.message}`, 'error');
+      showToast('Error', `Failed to save dispatch completion: ${error.message}`);
     } finally {
       setIsSaving(false);
     }
-  }, [selectedRows, orders, editData, fetchPendingOrders, fetchHistory, showToast, API_URL, SHEET_ID]);
+  };
 
   const handleRefresh = useCallback(() => {
     fetchPendingOrders(true);
@@ -644,6 +701,14 @@ const DispatchComplete = () => {
                   Cancel
                 </button>
                 <button
+                  onClick={handleBulkCancelDispatch}
+                  disabled={isSaving}
+                  className="flex items-center justify-center gap-2 px-4 h-[42px] bg-red-600 text-white rounded hover:bg-red-700 shadow-md font-bold text-sm shadow-red-500/20 transition-all"
+                >
+                  <XCircle size={15} />
+                  Cancel Selected
+                </button>
+                <button
                   onClick={handleSave}
                   disabled={isSaving}
                   className="flex items-center justify-center gap-2 px-5 h-[42px] bg-primary text-white rounded hover:bg-primary-hover shadow-md font-bold text-sm disabled:opacity-50"
@@ -715,11 +780,11 @@ const DispatchComplete = () => {
                 </tr>
               ) : (
                 (activeTab === 'pending' ? filteredAndSortedPending : filteredAndSortedHistory).map((item) => {
-                  const realIdx = item.originalIndex;
-                  const isSelected = activeTab === 'pending' && !!selectedRows[realIdx];
+                  const itemId = item.id;
+                  const isSelected = activeTab === 'pending' && !!selectedRows[itemId];
                   return (
                     <tr
-                      key={activeTab === 'pending' ? `p-${item.dispatchNo}-${realIdx}` : `h-${item.dispatchNo}-${realIdx}`}
+                      key={itemId}
                       className={`transition-colors ${isSelected ? 'bg-green-50/50' : 'hover:bg-gray-50'}`}
                     >
                       {activeTab === 'pending' && (
@@ -727,7 +792,7 @@ const DispatchComplete = () => {
                           <input
                             type="checkbox"
                             checked={isSelected}
-                            onChange={() => handleCheckboxToggle(realIdx, item)}
+                            onChange={() => handleCheckboxToggle(itemId, item)}
                             className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
                           />
                         </td>
@@ -740,8 +805,8 @@ const DispatchComplete = () => {
                         {activeTab === 'pending' && isSelected ? (
                           <div className="w-64">
                             <SearchableDropdown
-                              value={editData[realIdx]?.product || item.itemName}
-                              onChange={(val) => handleEditChange(realIdx, 'product', val)}
+                              value={editData[itemId]?.product || item.itemName}
+                              onChange={(val) => handleEditChange(itemId, 'product', val)}
                               options={itemNames}
                               placeholder="Select Product"
                               showAll={false}
@@ -755,10 +820,10 @@ const DispatchComplete = () => {
                       </td>
                       <td className={`px-6 py-4 text-center font-bold text-gray-800 relative ${isSelected ? 'z-[60]' : ''}`}>
                         {activeTab === 'pending' && isSelected ? (
-                          <div className="w-40 mx-auto">
+                          <div className="w-64 mx-auto">
                             <SearchableDropdown
-                              value={editData[realIdx]?.godown || item.godownName}
-                              onChange={(val) => handleEditChange(realIdx, 'godown', val)}
+                              value={editData[itemId]?.godown || item.godownName}
+                              onChange={(val) => handleEditChange(itemId, 'godown', val)}
                               options={godowns}
                               placeholder="Select Godown"
                               showAll={false}
@@ -775,8 +840,8 @@ const DispatchComplete = () => {
                         {activeTab === 'pending' && isSelected ? (
                           <input
                             type="text"
-                            value={editData[realIdx]?.dispatchQty || item.dispatchQty}
-                            onChange={(e) => handleEditChange(realIdx, 'dispatchQty', e.target.value)}
+                            value={editData[itemId]?.dispatchQty || item.dispatchQty}
+                            onChange={(e) => handleEditChange(itemId, 'dispatchQty', e.target.value)}
                             className="w-full px-1 py-0.5 border rounded text-xs outline-none focus:border-primary"
                           />
                         ) : (
@@ -789,8 +854,8 @@ const DispatchComplete = () => {
                             <input
                               type="date"
                               disabled={!isSelected}
-                              value={editData[realIdx]?.completeDate || ''}
-                              onChange={(e) => handleEditChange(realIdx, 'completeDate', e.target.value)}
+                              value={editData[itemId]?.completeDate || ''}
+                              onChange={(e) => handleEditChange(itemId, 'completeDate', e.target.value)}
                               className="px-1 py-0.5 border rounded text-xs outline-none focus:border-primary disabled:opacity-50"
                             />
                           </td>
@@ -798,8 +863,8 @@ const DispatchComplete = () => {
                             <div className="relative group">
                               <select
                                 disabled={!isSelected}
-                                value={editData[realIdx]?.status || 'Completed'}
-                                onChange={(e) => handleEditChange(realIdx, 'status', e.target.value)}
+                                value={editData[itemId]?.status || 'Completed'}
+                                onChange={(e) => handleEditChange(itemId, 'status', e.target.value)}
                                 className={`w-full pl-3 pr-8 py-2 border border-gray-200 rounded text-xs font-semibold appearance-none bg-white transition-all shadow-sm ${
                                   isSelected
                                     ? 'cursor-pointer hover:border-primary focus:ring-primary focus:border-transparent outline-none'
@@ -818,8 +883,14 @@ const DispatchComplete = () => {
                       )}
                       {activeTab === 'history' && (
                         <>
-                          <td className="px-6 py-4 text-gray-500 text-center text-xs font-medium">
-                            {formatDisplayDate(item.completeDate)}
+                          <td className="px-6 py-4 text-gray-500 text-center text-[11px] font-bold">
+                            {item.completedAt ? new Date(item.completedAt).toLocaleString('en-IN', {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            }) : '-'}
                           </td>
                           <td className="px-6 py-4 text-center">
                             <span className="bg-green-100 text-green-700 px-3 py-1.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border border-green-200 shadow-sm">

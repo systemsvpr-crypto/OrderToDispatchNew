@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { UserPlus, Shield, X, Trash2, Pencil, RefreshCw, Loader, Save, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
-
+import { supabase } from '../../supabaseClient';
 // --- Skeleton Components ---
 const TableSkeleton = () => (
   <>
@@ -102,62 +102,39 @@ const Settings = () => {
 
     // Fetch Users
     const fetchAllUsers = useCallback(async (isRefresh = false) => {
-        if (abortControllerRef.current) abortControllerRef.current.abort();
-        const controller = new AbortController();
-        abortControllerRef.current = controller;
-
         if (isRefresh) setIsRefreshing(true);
         else setIsLoading(true);
 
-        const MIN_DISPLAY_MS = 1500;
-        const minTimer = new Promise(resolve => setTimeout(resolve, MIN_DISPLAY_MS));
-
-        const doFetch = async () => {
-            const response = await fetch(
-                `${API_URL}?sheet=Login&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`,
-                { signal: controller.signal }
-            );
-            const result = await response.json();
-            if (result.success && Array.isArray(result.data)) {
-                const mapped = result.data.map((item, idx) => {
-                    const rawAccess = getVal(item, 'pageAccess', 'Access') || '';
-                    const pageAccess = Array.isArray(rawAccess)
-                        ? rawAccess
-                        : String(rawAccess).split(',').map(s => s.trim()).filter(Boolean);
-                    return {
-                        originalIndex: item.originalIndex || idx,
-                        name: item.name || getVal(item, 'userName', 'User Name') || '-',
-                        id: item.id || getVal(item, 'userId', 'User ID') || '-',
-                        password: item.password || '-',
-                        role: item.role || 'user',
-                        pageAccess
-                    };
-                });
-                return mapped.filter(u => u.id !== '-' && u.id !== 'User ID');
-            }
-            return [];
-        };
-
         try {
-            const [mapped] = await Promise.all([doFetch(), minTimer]);
-            if (!controller.signal.aborted) setUsers(mapped);
+            const { data, error } = await supabase
+                .from('app_users')
+                .select('*');
+
+            if (error) throw error;
+
+            if (data) {
+                const mapped = data.map((item) => ({
+                    originalIndex: item.serial_number,
+                    name: item.user_name || '-',
+                    id: item.user_id || '-',
+                    password: item.password || '-',
+                    role: item.role || 'user',
+                    pageAccess: item.page_access || []
+                }));
+                setUsers(mapped);
+            }
         } catch (error) {
-            if (error.name !== 'AbortError') {
-                console.error('fetchAllUsers error:', error);
-                showToast('Failed to load users: ' + error.message, 'error');
-            }
+            console.error('fetchAllUsers error:', error);
+            showToast('Failed to load users: ' + error.message, 'error');
         } finally {
-            if (!controller.signal.aborted) {
-                setIsLoading(false);
-                setIsRefreshing(false);
-            }
+            setIsLoading(false);
+            setIsRefreshing(false);
         }
-    }, [API_URL, SHEET_ID, showToast]);
+    }, [showToast]);
 
     // Auto-fetch on mount
     useEffect(() => {
         fetchAllUsers();
-        return () => { if (abortControllerRef.current) abortControllerRef.current.abort(); };
     }, [fetchAllUsers]);
 
     const filteredUsers = useMemo(() => {
@@ -173,30 +150,29 @@ const Settings = () => {
         setIsSaving(true);
 
         try {
-            // Prepare row for 'Login' sheet: User Name(B), User ID(C), Password(D), Role(E), Page Access(F)
-            const rowData = {
-                'User Name': newUser.name,
-                'User ID': newUser.id,
-                'Password': newUser.password,
-                'Role': newUser.role,
-                'Page Access': newUser.pageAccess.join(', ')
+            const payload = {
+                user_name: newUser.name,
+                user_id: newUser.id,
+                password: newUser.password,
+                role: newUser.role,
+                page_access: newUser.pageAccess
             };
 
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                    sheet: 'Login',
-                    sheetId: SHEET_ID,
-                    mode: editingUser !== null ? 'update' : 'append',
-                    // Use originalIndex for update, or just append
-                    ...(editingUser !== null ? { originalIndex: users.find(u => u.id === editingUser)?.originalIndex } : {}),
-                    rows: [rowData]
-                })
-            });
+            let error;
+            if (editingUser !== null) {
+                const { error: updateError } = await supabase
+                    .from('app_users')
+                    .update(payload)
+                    .eq('user_id', editingUser);
+                error = updateError;
+            } else {
+                const { error: insertError } = await supabase
+                    .from('app_users')
+                    .insert([payload]);
+                error = insertError;
+            }
 
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Failed to save user');
+            if (error) throw error;
 
             showToast(editingUser ? "User updated successfully" : "User added successfully");
             await fetchAllUsers(true);
@@ -223,24 +199,12 @@ const Settings = () => {
 
         setIsSaving(true);
         try {
-            // Usually delete is handled by mark as deleted or specific mode. 
-            // Here we assume backend handles row deletion or we just update with empty/specific flag if needed.
-            // For now, let's assume we update the status or role to 'deleted' if the backend doesn't support hard delete.
-            // Re-fetching after any change is safest.
+            const { error } = await supabase
+                .from('app_users')
+                .delete()
+                .eq('user_id', user.id);
 
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                    sheet: 'Login',
-                    sheetId: SHEET_ID,
-                    mode: 'delete', // Assuming backend support for 'delete' mode via originalIndex
-                    originalIndex: user.originalIndex
-                })
-            });
-
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Failed to delete user');
+            if (error) throw error;
 
             showToast("User removed", "error");
             await fetchAllUsers(true);

@@ -1,19 +1,17 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { X, Loader, Save, RefreshCcw, ChevronUp, ChevronDown } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
-
-const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
+import { supabase } from '../../supabaseClient';
 
 // --- Skeleton Components ---
-const TableSkeleton = () => (
+const TableSkeleton = ({ cols = 9 }) => (
   <>
     {[...Array(7)].map((_, i) => (
-      <tr key={i} className="border-b border-gray-100 last:border-0">
-        {[...Array(11)].map((_, j) => (
+      <tr key={i} className="border-b border-gray-100 last:border-0 h-16">
+        {[...Array(cols)].map((_, j) => (
           <td key={j} className="px-6 py-4">
-            <div className="h-4 bg-gray-100 rounded-lg relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
+            <div className="h-4 bg-gray-100 rounded-lg relative overflow-hidden animate-pulse">
+               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
             </div>
           </td>
         ))}
@@ -22,38 +20,8 @@ const TableSkeleton = () => (
   </>
 );
 
-const MobileSkeleton = () => (
-  <div className="md:hidden mt-4 space-y-3">
-    {[...Array(4)].map((_, i) => (
-      <div key={i} className="p-4 bg-white rounded shadow-sm border border-gray-100 space-y-3">
-        <div className="flex justify-between items-start pb-2 border-b border-gray-50">
-          <div className="space-y-2 w-2/3">
-            <div className="h-3 w-1/3 bg-gray-100 rounded-lg relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
-            </div>
-            <div className="h-5 w-full bg-gray-100 rounded-lg relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
-            </div>
-          </div>
-          <div className="h-7 w-16 bg-gray-100 rounded-lg relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          {[...Array(4)].map((_, j) => (
-            <div key={j} className="h-4 bg-gray-50 rounded-lg relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer"></div>
-            </div>
-          ))}
-        </div>
-      </div>
-    ))}
-  </div>
-);
-
 const PcReport = () => {
     const [items, setItems] = useState([]);
-    const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -65,23 +33,8 @@ const PcReport = () => {
         remarks: ''
     });
     const { showToast } = useToast();
-    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
-    const abortControllerRef = useRef(null);
+    const [sortConfig, setSortConfig] = useState({ key: 'orderNumber', direction: 'desc' });
 
-    // Helper to get value from object regardless of key casing/spaces
-    const getVal = (obj, ...possibleKeys) => {
-        if (!obj) return undefined;
-        const keys = Object.keys(obj);
-        for (const pKey of possibleKeys) {
-            if (obj[pKey] !== undefined) return obj[pKey];
-            const normalizedPKey = pKey.toLowerCase().replace(/[^a-z0-9]/g, '');
-            const foundKey = keys.find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedPKey);
-            if (foundKey) return obj[foundKey];
-        }
-        return undefined;
-    };
-
-    // Format date for display (e.g., 25-Feb-2026)
     const formatDisplayDate = (dateStr) => {
         if (!dateStr || dateStr === '-') return '-';
         try {
@@ -89,345 +42,232 @@ const PcReport = () => {
             if (isNaN(date.getTime())) return dateStr;
             const day = date.getDate().toString().padStart(2, '0');
             const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            const month = months[date.getMonth()];
-            const year = date.getFullYear();
-            return `${day}-${month}-${year}`;
+            return `${day}-${months[date.getMonth()]}-${date.getFullYear()}`;
         } catch { return dateStr; }
     };
 
-    // Fetcher
-    const fetchData = useCallback(async (isRefresh = false) => {
-        if (abortControllerRef.current) abortControllerRef.current.abort();
-        const controller = new AbortController();
-        abortControllerRef.current = controller;
-
+    const fetchTrackerData = useCallback(async (isRefresh = false) => {
         if (isRefresh) setIsRefreshing(true);
         else setIsLoading(true);
 
-        const MIN_DISPLAY_MS = 1500;
-        const minTimer = new Promise(resolve => setTimeout(resolve, MIN_DISPLAY_MS));
-
-        const doFetch = async () => {
-            const url = new URL(API_URL);
-            url.searchParams.set('sheet', 'PC Report');
-            url.searchParams.set('mode', 'table');
-            if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
-
-            const response = await fetch(url.toString(), { signal: controller.signal });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const result = await response.json();
-
-            if (result.success && Array.isArray(result.data)) {
-                return result.data.map((item, idx) => ({
-                    originalIndex: idx,
-                    orderNumber: getVal(item, 'orderNumber', 'Unique Number', 'Order No') || '-',
-                    plannedDate: getVal(item, 'plannedDate', 'Planned Date') || '-',
-                    stepName: getVal(item, 'stepName', 'Step Name', 'Stage') || '-',
-                    who: getVal(item, 'who', 'Who') || '-',
-                    clientName: getVal(item, 'clientName', 'Client Name', 'Client') || '-',
-                    godown: getVal(item, 'godown', 'Godown') || '-',
-                    itemName: getVal(item, 'itemName', 'Item Name', 'Product') || '-',
-                    orderQty: getVal(item, 'orderQty', 'Order Qty', 'Qty') || '0',
-                    status: getVal(item, 'status', 'Status') || '-',
-                    remarks: getVal(item, 'remarks', 'Remarks') || '-'
-                }));
-            }
-            return [];
-        };
-
         try {
-            const [mapped] = await Promise.all([doFetch(), minTimer]);
-            if (!controller.signal.aborted) setItems(mapped);
+            const [ordersRes, plansRes] = await Promise.all([
+                supabase.from('app_orders').select('*').order('created_at', { ascending: false }),
+                supabase.from('dispatch_plans').select('*')
+            ]);
+
+            if (ordersRes.error) throw ordersRes.error;
+            if (plansRes.error) throw plansRes.error;
+
+            const allOrders = ordersRes.data || [];
+            const allPlans = plansRes.data || [];
+            let report = [];
+
+            // 1. Un-planned logic (Dispatch Planning Stage)
+            allOrders.forEach(order => {
+                const plans = allPlans.filter(p => p.order_id === order.id);
+                const plannedSum = plans.filter(p => p.status !== 'Canceled').reduce((sum, p) => sum + (parseFloat(p.planned_qty) || 0), 0);
+                const canceledSum = plans.filter(p => p.status === 'Canceled').reduce((sum, p) => sum + (parseFloat(p.planned_qty) || 0), 0);
+                const remaining = (parseFloat(order.qty) || 0) - plannedSum - canceledSum;
+
+                if (remaining > 0.001) {
+                    report.push({
+                        id: `ORDER-${order.id}`,
+                        orderNumber: order.order_number || '-',
+                        plannedDate: formatDisplayDate(order.order_date),
+                        stepName: 'Dispatch Planning',
+                        who: order.created_by || 'Ravi',
+                        clientName: order.client_name || '-',
+                        godown: order.godown_name || '-',
+                        itemName: order.item_name || '-',
+                        orderQty: order.qty || '0',
+                        canceledQty: canceledSum || '0'
+                    });
+                }
+            });
+
+            // 2. Active Plans logic (Notification and Shipping Stages)
+            allPlans.forEach(plan => {
+                if (plan.status === 'Canceled') return; // Do not show canceled plans in the active tracking stages
+                
+                const order = allOrders.find(o => o.id === plan.order_id);
+                
+                let step = '';
+                let who = '';
+
+                if (!plan.informed_before_dispatch) {
+                    step = 'Inform To Party Before Dispatch';
+                    who = 'CRM';
+                } else if (!plan.dispatch_completed) {
+                    step = 'Dispatch Complete';
+                    who = 'Godown';
+                } else if (!plan.informed_after_dispatch) {
+                    step = 'After Dispatch Inform';
+                    who = 'CRM';
+                } else {
+                    return; // Skip completed items as requested
+                }
+
+                report.push({
+                    id: `PLAN-${plan.id}`,
+                    orderNumber: order?.order_number || plan.dispatch_number,
+                    plannedDate: formatDisplayDate(plan.planned_date),
+                    stepName: step,
+                    who: who,
+                    clientName: order?.client_name || '-',
+                    godown: plan.godown_name || order?.godown_name || '-',
+                    itemName: order?.item_name || '-',
+                    orderQty: plan.planned_qty || '0',
+                    canceledQty: '0' // Plans that are in-progress don't show individual cancels here
+                });
+            });
+
+            setItems(report);
         } catch (error) {
-            if (error.name !== 'AbortError') {
-                console.error('Error fetching data:', error);
-                showToast('Error', 'Failed to load PC Report data: ' + error.message);
-            }
+            console.error('Tracker error:', error);
+            showToast('Error', 'Failed to update tracker: ' + error.message);
         } finally {
-            if (!controller.signal.aborted) {
-                setIsLoading(false);
-                setIsRefreshing(false);
-            }
+            setIsLoading(false);
+            setIsRefreshing(false);
         }
     }, [showToast]);
 
-    // Initial load on mount
-    useEffect(() => {
-        fetchData();
-        return () => { if (abortControllerRef.current) abortControllerRef.current.abort(); };
-    }, [fetchData]);
+    useEffect(() => { fetchTrackerData(); }, [fetchTrackerData]);
 
-    // Refresh handler
-    const handleRefresh = useCallback(() => fetchData(true), [fetchData]);
+    const handleRefresh = () => fetchTrackerData(true);
 
-    // Sorting logic
-    const requestSort = useCallback((key) => {
-        setSortConfig(prev => ({
-            key,
-            direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
-        }));
-    }, []);
-
-    const getSortedItems = useCallback((itemsToSort) => {
-        if (!sortConfig.key) return itemsToSort;
-        return [...itemsToSort].sort((a, b) => {
-            let aVal = a[sortConfig.key];
-            let bVal = b[sortConfig.key];
-            const aNum = parseFloat(aVal), bNum = parseFloat(bVal);
-            if (!isNaN(aNum) && !isNaN(bNum)) return sortConfig.direction === 'asc' ? aNum - bNum : bNum - aNum;
-            if (sortConfig.key === 'plannedDate') {
-                const aDate = new Date(aVal), bDate = new Date(bVal);
-                if (!isNaN(aDate) && !isNaN(bDate)) return sortConfig.direction === 'asc' ? aDate - bDate : bDate - aDate;
-            }
-            aVal = String(aVal || '').toLowerCase();
-            bVal = String(bVal || '').toLowerCase();
-            if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
-            if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
-            return 0;
-        });
-    }, [sortConfig]);
-
-    // Filter and Sort - Memoized
-    const filteredAndSortedItems = useMemo(() => {
-        const filtered = items.filter(item =>
-            Object.values(item).some(val =>
-                String(val).toLowerCase().includes(searchTerm.toLowerCase().trim())
-            )
+    const sortedItems = useMemo(() => {
+        let result = [...items].filter(it => 
+            Object.values(it).some(val => String(val).toLowerCase().includes(searchTerm.toLowerCase()))
         );
-        return getSortedItems(filtered);
-    }, [items, searchTerm, getSortedItems]);
-
-    const openReportModal = useCallback((item) => {
-        setCurrentItem(item);
-        setFormData({
-            stage: item.stepName !== '-' ? item.stepName : '',
-            status: 'Running',
-            remarks: ''
-        });
-        setModalOpen(true);
-    }, []);
-
-    const handleInputChange = useCallback((e) => {
-        const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
-    }, []);
-
-    const handleSubmit = useCallback(async (e) => {
-        e.preventDefault();
-        if (!currentItem) return;
-
-        setIsSaving(true);
-        try {
-            const rowsToSubmit = [{
-                orderNumber: currentItem.orderNumber,
-                plannedDate: currentItem.plannedDate,
-                stepName: formData.stage,
-                who: currentItem.who,
-                clientName: currentItem.clientName,
-                godown: currentItem.godown,
-                itemName: currentItem.itemName,
-                orderQty: currentItem.orderQty,
-                status: formData.status,
-                remarks: formData.remarks
-            }];
-
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                    sheet: 'Flw-Up',
-                    sheetId: SHEET_ID,
-                    rows: rowsToSubmit
-                })
+        if (sortConfig.key) {
+            result.sort((a, b) => {
+                const aVal = a[sortConfig.key];
+                const bVal = b[sortConfig.key];
+                if (sortConfig.direction === 'asc') return aVal > bVal ? 1 : -1;
+                return aVal < bVal ? 1 : -1;
             });
-
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Unknown error');
-
-            showToast('Update submitted successfully.', 'success');
-            
-            // Add a small delay to allow Google Sheets to update formulas
-            await new Promise(r => setTimeout(r, 1500));
-            
-            // Refresh data
-            await handleRefresh();
-            setModalOpen(false);
-        } catch (error) {
-            console.error('Submit error:', error);
-            showToast(`Submission failed: ${error.message}`, 'error');
-        } finally {
-            setIsSaving(false);
         }
-    }, [currentItem, formData, API_URL, SHEET_ID, handleRefresh, showToast]);
+        return result;
+    }, [items, searchTerm, sortConfig]);
+
+    const requestSort = (key) => {
+        setSortConfig(prev => ({ key, direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc' }));
+    };
+
+    const openReportModal = (item) => {
+        setCurrentItem(item);
+        setFormData({ stage: item.stepName, status: 'Running', remarks: '' });
+        setModalOpen(true);
+    };
+
+    const handleFormSubmit = async (e) => {
+        e.preventDefault();
+        showToast('Tracking is automated based on page progress.', 'info');
+        setModalOpen(false);
+    };
 
     return (
-        <div className="">
-            <div className="flex flex-wrap items-center gap-3 mb-6 bg-white p-4 lg:p-5 rounded shadow-sm border border-gray-100 max-w-[1200px] mx-auto">
-                <h1 className="text-xl font-bold text-gray-800">PC Report</h1>
-                <button
-                    onClick={handleRefresh}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-green-50 text-primary rounded hover:bg-green-100 transition-colors text-xs font-bold border border-green-100"
-                >
-                    <RefreshCcw size={14} className={isRefreshing ? 'animate-spin' : ''} />
-                    Refresh
-                </button>
-                <div className="flex-1" />
-                <div className="relative">
-                    <input
-                        type="text"
-                        placeholder="Search..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-40 lg:w-64 px-10 py-2 bg-gray-50 border border-gray-200 rounded focus:ring-primary focus:border-primary"
-                    />
+        <div className="p-4 lg:p-6 max-w-[1500px] mx-auto">
+            {/* Header */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                <div className="flex items-center gap-4">
+                    <h1 className="text-2xl font-bold text-gray-800">PC Report</h1>
+                    <button onClick={handleRefresh} className="flex items-center gap-2 px-4 py-1.5 bg-green-50 text-green-600 rounded-md hover:bg-green-100 transition-colors border border-green-200 text-sm font-bold">
+                        <RefreshCcw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+                        Refresh
+                    </button>
+                </div>
+                <div className="relative max-w-sm w-full">
+                    <input type="text" placeholder="Search..." value={searchTerm} onChange={(e)=>setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-md focus:ring-2 focus:ring-primary/20 outline-none text-sm transition-all" />
                     <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                     </div>
-                    {searchTerm && (
-                        <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                            <X size={14} />
-                        </button>
-                    )}
                 </div>
             </div>
 
-            <div className="bg-white rounded shadow-sm border border-gray-200 overflow-hidden max-w-[1200px] mx-auto">
-                <div className="overflow-x-auto scrollbar-thin max-h-[500px]">
-                    <table className="w-full text-left border-collapse min-w-[1400px]">
+            {/* Table */}
+            <div className="bg-white rounded-md shadow-sm border border-gray-200 overflow-hidden">
+                <div className="overflow-x-auto scrollbar-thin">
+                    <table className="w-full text-left border-collapse min-w-[1300px]">
                         <thead>
-                            <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-600 font-bold sticky top-0 z-10 shadow-sm">
-                                <th className="px-6 py-4 sticky left-0 bg-gray-50 z-20 text-center">Action</th>
+                            <tr className="bg-gray-50/80 border-b border-gray-200 text-[11px] uppercase text-gray-500 font-black tracking-widest">
+                                <th className="px-6 py-4 text-center">Action</th>
                                 {[
                                     { label: 'Unique Number', key: 'orderNumber' },
                                     { label: 'Planned Date', key: 'plannedDate', align: 'center' },
                                     { label: 'Step Name', key: 'stepName' },
-                                    { label: 'Who', key: 'who' },
                                     { label: 'Client Name', key: 'clientName' },
                                     { label: 'Godown', key: 'godown', align: 'center' },
                                     { label: 'Item Name', key: 'itemName' },
                                     { label: 'Order Qty', key: 'orderQty', align: 'right' },
-                                    { label: 'Status', key: 'status', align: 'center' },
-                                    { label: 'Remarks', key: 'remarks' }
+                                    { label: 'Canceled Qty', key: 'canceledQty', align: 'right' }
                                 ].map((col) => (
-                                    <th key={col.key} className={`px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left'}`} onClick={() => requestSort(col.key)}>
-                                        <div className={`flex items-center gap-1 ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : 'justify-start'}`}>
+                                    <th key={col.key} onClick={() => requestSort(col.key)} className={`px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors ${col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : ''}`}>
+                                        <div className={`flex items-center gap-1.5 ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : ''}`}>
                                             {col.label}
-                                            <div className="flex flex-col">
-                                                <ChevronUp size={10} className={sortConfig.key === col.key && sortConfig.direction === 'asc' ? 'text-primary' : 'text-gray-300'} />
-                                                <ChevronDown size={10} className={sortConfig.key === col.key && sortConfig.direction === 'desc' ? 'text-primary' : 'text-gray-300'} />
-                                            </div>
+                                            <div className="flex flex-col opacity-30"><ChevronUp size={10} /><ChevronDown size={10} /></div>
                                         </div>
                                     </th>
                                 ))}
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-200 text-sm">
-                            {isLoading ? (
-                                <TableSkeleton />
-                            ) : filteredAndSortedItems.length === 0 ? (
-                                <tr><td colSpan="11" className="px-4 py-20 text-center text-gray-400 italic font-bold text-sm">No items found matching your criteria.</td></tr>
-                            ) : null}
-                            {!isLoading && filteredAndSortedItems.map((item) => (
-                                <tr key={item.originalIndex} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 sticky left-0 bg-white hover:bg-gray-50 z-1 border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.05)] text-center">
-                                        <button onClick={() => openReportModal(item)} className="px-3 py-1 bg-primary text-white rounded-md text-xs font-medium hover:bg-primary-hover transition-colors">Update</button>
-                                    </td>
-                                    <td className="px-6 py-4 font-semibold text-gray-900">{item.orderNumber}</td>
-                                    <td className="px-6 py-4 text-gray-600 text-center">{formatDisplayDate(item.plannedDate)}</td>
-                                    <td className="px-6 py-4 text-gray-600">{item.stepName}</td>
-                                    <td className="px-6 py-4 text-gray-600">{item.who}</td>
-                                    <td className="px-6 py-4 text-gray-600">{item.clientName}</td>
-                                    <td className="px-6 py-4 text-gray-600 text-center">{item.godown}</td>
-                                    <td className="px-6 py-4 text-gray-600">{item.itemName}</td>
-                                    <td className="px-6 py-4 text-gray-600 text-right">{item.orderQty}</td>
-                                    <td className="px-6 py-4 text-center">
-                                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${item.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                                            {item.status}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 text-gray-600">{item.remarks}</td>
-                                </tr>
-                            ))}
+                        <tbody className="divide-y divide-gray-100 text-[13px]">
+                            {isLoading ? <TableSkeleton cols={8} /> : sortedItems.length === 0 ? <tr><td colSpan="8" className="p-20 text-center italic text-gray-400">No pending orders in tracking.</td></tr> : (
+                                sortedItems.map((item) => (
+                                    <tr key={item.id} className="hover:bg-gray-50/50 transition-colors border-b border-gray-50 last:border-0 h-16">
+                                        <td className="px-6 py-3 text-center">
+                                            <button onClick={() => openReportModal(item)} className="px-3 py-1 bg-[#68d306] text-white rounded text-xs font-bold hover:bg-[#5bb805] shadow-sm transform active:scale-95 transition-all">Update</button>
+                                        </td>
+                                        <td className="px-6 py-3 font-bold text-gray-800">{item.orderNumber}</td>
+                                        <td className="px-6 py-3 text-gray-500 text-center">{item.plannedDate}</td>
+                                        <td className="px-6 py-3 text-gray-500">{item.stepName}</td>
+                                        <td className="px-6 py-3 text-gray-500 font-medium">{item.clientName}</td>
+                                        <td className="px-6 py-3 text-gray-500 text-center">{item.godown}</td>
+                                        <td className="px-6 py-3 text-gray-500 truncate max-w-[250px]">{item.itemName}</td>
+                                        <td className="px-6 py-3 text-gray-800 text-right font-black">{item.orderQty}</td>
+                                        <td className="px-6 py-3 text-red-500 text-right font-black">{item.canceledQty > 0 ? `-${item.canceledQty}` : '0'}</td>
+                                    </tr>
+                                ))
+                            )}
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            {/* Mobile View */}
-            {isLoading ? <MobileSkeleton /> : (
-              <div className="md:hidden mt-4 space-y-3">
-                {filteredAndSortedItems.map((item) => (
-                    <div key={item.originalIndex} className="p-4 bg-white rounded shadow-sm border border-gray-100 space-y-3">
-                        <div className="flex justify-between items-start border-b border-gray-50 pb-2">
-                            <div>
-                                <p className="text-[10px] font-bold text-primary uppercase">{item.orderNumber}</p>
-                                <h4 className="text-sm font-bold text-gray-900">{item.itemName}</h4>
-                            </div>
-                            <button onClick={() => openReportModal(item)} className="px-3 py-1 bg-primary text-white rounded text-xs font-medium shadow-sm hover:bg-primary-hover">Update</button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-y-2 text-[11px]">
-                            <div className="text-gray-500">Planned: <span className="text-gray-800 font-medium">{formatDisplayDate(item.plannedDate)}</span></div>
-                            <div className="text-gray-500">Step: <span className="text-gray-800 font-medium">{item.stepName}</span></div>
-                            <div className="text-gray-500">Who: <span className="text-gray-800 font-medium">{item.who}</span></div>
-                            <div className="text-gray-500">Qty: <span className="text-gray-800 font-bold">{item.orderQty}</span></div>
-                            <div className="col-span-2 text-gray-500">Status: <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${item.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{item.status}</span></div>
-                        </div>
-                    </div>
-                ))}
-              </div>
-            )}
-
-            {/* Saving Overlay */}
-            {isSaving && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/40 backdrop-blur-md">
-                    <div className="bg-white/80 p-10 rounded-3xl shadow-xl flex flex-col items-center gap-4 border border-white/50">
-                        <Loader className="w-10 h-10 animate-spin text-primary" />
-                        <p className="text-sm font-black text-gray-700 uppercase tracking-widest">Updating Report...</p>
-                    </div>
-                </div>
-            )}
-
-            {/* Refresh progress bar */}
-            {isRefreshing && (
-                <div className="fixed top-0 left-0 right-0 h-1 z-[101] bg-gray-100 overflow-hidden">
-                    <div className="h-full bg-primary animate-shimmer-fast" style={{ width: '40%' }}></div>
-                </div>
-            )}
-
-            {/* Modal */}
+            {/* Modal - Exactly like Screenshot 2 */}
             {modalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-                    <div className="bg-white rounded shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-300">
-                        <div className="px-6 py-4 bg-primary text-white flex justify-between items-center">
-                            <h2 className="text-lg font-bold">Update PC Status</h2>
-                            <button onClick={() => setModalOpen(false)} className="text-white/80 hover:text-white"><X size={20} /></button>
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+                    <div className="bg-white rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200 border-t-8 border-[#68d306]">
+                        <div className="px-6 py-4 bg-[#68d306] text-white flex justify-between items-center shadow-md">
+                            <h2 className="text-xl font-bold tracking-tight">Update PC Status</h2>
+                            <button onClick={()=>setModalOpen(false)} className="bg-white/20 p-1 rounded-full hover:bg-white/30 transition-all"><X size={18} /></button>
                         </div>
-                        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                        <form onSubmit={handleFormSubmit} className="p-8 space-y-6">
                             <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Unique Number</label>
-                                <div className="px-3 py-2 bg-gray-50 border border-gray-100 rounded text-sm text-gray-700 font-semibold">{currentItem?.orderNumber}</div>
+                                <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Unique Number</label>
+                                <div className="px-4 py-3 bg-gray-50 border border-gray-100 rounded text-sm text-gray-800 font-bold">{currentItem?.orderNumber}</div>
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Stage / Step Name</label>
-                                <input type="text" name="stage" value={formData.stage} onChange={handleInputChange} required className="w-full px-3 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm" placeholder="Enter current stage" />
+                                <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Stage / Step Name</label>
+                                <div className="px-4 py-3 border border-gray-200 rounded text-sm text-gray-700 bg-white font-medium">{currentItem?.stepName}</div>
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Compliance Status</label>
-                                <select name="status" value={formData.status} onChange={handleInputChange} className="w-full px-3 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm">
+                                <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Compliance Status</label>
+                                <select value={formData.status} onChange={(e)=>setFormData({...formData, status: e.target.value})} className="w-full px-4 py-3 border border-gray-200 rounded text-sm font-medium focus:ring-2 focus:ring-[#68d306]/20 transition-all bg-white outline-none">
                                     <option value="Running">Running</option>
                                     <option value="Completed">Completed</option>
                                     <option value="Order Cancel">Order Cancel</option>
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Remarks</label>
-                                <textarea name="remarks" value={formData.remarks} onChange={handleInputChange} rows="3" className="w-full px-3 py-2 border border-gray-200 rounded focus:ring-primary focus:border-primary outline-none text-sm resize-none" placeholder="Enter details..." />
+                                <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Remarks</label>
+                                <textarea placeholder="Enter details..." className="w-full px-4 py-3 border border-gray-200 rounded text-sm font-medium focus:ring-2 focus:ring-[#68d306]/20 transition-all outline-none resize-none h-24" />
                             </div>
-                            <div className="flex justify-end gap-3 pt-4">
-                                <button type="button" onClick={() => setModalOpen(false)} className="px-4 py-2 border border-gray-200 rounded text-gray-600 hover:bg-gray-50 text-sm font-medium">Cancel</button>
-                                <button type="submit" disabled={isSaving} className="flex items-center gap-2 px-6 py-2 bg-primary text-white rounded hover:bg-primary-hover disabled:opacity-50 text-sm font-bold shadow-md hover:shadow-lg transition-all">
-                                    {isSaving ? <Loader size={16} className="animate-spin" /> : <Save size={16} />}
-                                    {isSaving ? 'Processing...' : 'Submit Update'}
+                            <div className="flex gap-4 pt-4">
+                                <button type="button" onClick={()=>setModalOpen(false)} className="flex-1 px-4 py-3 border border-gray-200 rounded text-gray-600 font-black text-xs uppercase hover:bg-gray-50 transition-all">Cancel</button>
+                                <button type="submit" className="flex-1 px-4 py-3 bg-[#68d306] text-white rounded font-black text-xs uppercase shadow-lg shadow-[#68d306]/20 hover:bg-[#5bb805] flex items-center justify-center gap-2 tracking-widest transition-all">
+                                    <Save size={16} /> Submit Update
                                 </button>
                             </div>
                         </form>

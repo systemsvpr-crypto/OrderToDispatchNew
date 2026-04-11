@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../supabaseClient';
 
 const AuthContext = createContext(undefined);
 
@@ -11,46 +12,42 @@ export function AuthProvider({ children }) {
   const navigate = useNavigate();
 
   const login = async (id, pass) => {
-    const API_URL = import.meta.env.VITE_SHEET_orderToDispatch_URL;
-    const SHEET_ID = import.meta.env.VITE_orderToDispatch_SHEET_ID;
-
     try {
-      const response = await fetch(`${API_URL}?sheet=Login&mode=table${SHEET_ID ? `&sheetId=${SHEET_ID}` : ''}`);
-      const result = await response.json();
+      // Fetch user from Supabase using app_users table
+      const { data: userRecord, error } = await supabase
+        .from('app_users')
+        .select('*')
+        .eq('user_id', id)
+        .eq('password', pass)
+        .single();
 
-      if (result.success && Array.isArray(result.data)) {
-        // Find user by ID (case-insensitive)
-        const foundUser = result.data.find(u => 
-          String(u.id || '').toLowerCase() === String(id).toLowerCase() && 
-          String(u.password || '') === String(pass)
-        );
-
-        if (foundUser) {
-          // Normalize pageAccess (Apps Script might return array or string)
-          const rawAccess = foundUser.pageAccess || foundUser.Access || '';
-          const pageAccess = Array.isArray(rawAccess) 
-            ? rawAccess 
-            : String(rawAccess).split(',').map(s => s.trim()).filter(Boolean);
-
-          const userData = {
-            id: foundUser.id,
-            name: foundUser.name || foundUser.userName || foundUser.id,
-            role: (foundUser.role || 'user').toLowerCase(),
-            pageAccess: pageAccess
-          };
-
-          setUser(userData);
-          localStorage.setItem('otd_user', JSON.stringify(userData));
-          return true;
+      if (userRecord && !error) {
+        // Assume page_access is stored as JSONB array, fallback if not
+        let pageAccess = [];
+        if (Array.isArray(userRecord.page_access)) {
+          pageAccess = userRecord.page_access;
+        } else if (typeof userRecord.page_access === 'string') {
+          pageAccess = JSON.parse(userRecord.page_access);
         }
+
+        const userData = {
+          id: userRecord.user_id,
+          name: userRecord.user_name || userRecord.user_id,
+          role: (userRecord.role || 'user').toLowerCase(),
+          pageAccess: pageAccess
+        };
+
+        setUser(userData);
+        localStorage.setItem('otd_user', JSON.stringify(userData));
+        return true;
       }
     } catch (error) {
-      console.error('Login fetch error:', error);
+      console.error('Supabase Login error:', error);
     }
 
-    // Fallback for hardcoded admin during development if sheet fetch fails or user not found
+    // Fallback for hardcoded admin during development if fetch fails
     if (id === "admin" && pass === "admin123") {
-      const allPages = ["Dashboard", "Order", "Dispatch Planning", "Inform to Party Before Dispatch", "Dispatch Completed", "Inform to Party After Dispatch", "Skip Delivered", "Godown", "Pc Report", "Settings"];
+      const allPages = ["Dashboard", "Order", "Dispatch Planning", "Inform to Party Before Dispatch", "Dispatch Completed", "Inform to Party After Dispatch", "Godown", "PC Report", "Skip Delivered", "Settings"];
       const userData = { id: "admin", name: "Administrator", role: "admin", pageAccess: allPages };
       setUser(userData);
       localStorage.setItem('otd_user', JSON.stringify(userData));

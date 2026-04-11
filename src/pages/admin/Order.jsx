@@ -1,10 +1,22 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Plus, X, Save, ChevronUp, ChevronDown, RefreshCw, Search, CheckCircle } from 'lucide-react';
+import { Plus, X, Save, ChevronUp, ChevronDown, RefreshCw, Search, CheckCircle, Trash2, XCircle } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
 import SearchableDropdown from '../../components/SearchableDropdown';
+import { supabase } from '../../supabaseClient';
 
 const Order = () => {
+  const calculateNextOrderNo = (existingOrders) => {
+    const allNumbers = (existingOrders || [])
+      .map(o => o.orderNumber || o.order_number)
+      .filter(no => no && String(no).startsWith('VPR/OR-'))
+      .map(no => parseInt(String(no).split('-')[1], 10))
+      .filter(n => !isNaN(n));
+    
+    const maxNo = allNumbers.length > 0 ? Math.max(...allNumbers) : 100;
+    return `VPR/OR-${maxNo + 1}`;
+  };
+
   const { showToast } = useToast();
   const { user } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -12,7 +24,8 @@ const Order = () => {
     orderDate: new Date().toISOString().split('T')[0],
     clientName: '',
     godownName: '',
-    items: [{ itemName: '', rate: '', qty: '' }]
+    items: [{ itemName: '', rate: '', qty: '' }],
+    orderNo: ''
   });
 
   const [itemNames, setItemNames] = useState([]);
@@ -37,135 +50,110 @@ const Order = () => {
   // Abort controller for ongoing fetch
   const abortControllerRef = useRef(null);
 
-  // --- Fetch orders from Google Sheets ---
+  // --- Fetch orders and real-time stock from Supabase ---
   const fetchOrdersData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setIsRefreshingOrders(true);
     else setIsLoadingOrders(true);
 
-    // Cancel legacy controller
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
     try {
-      const url = new URL(API_URL);
-      url.searchParams.set('sheet', 'ORDER');
-      url.searchParams.set('mode', 'table');
-      if (SHEET_ID) url.searchParams.set('sheetId', SHEET_ID);
+      // 1. Fetch Orders, Stock Levels, and Canceled Plans in parallel
+      const [ordersRes, stockRes, cancelRes] = await Promise.all([
+        supabase.from('app_orders').select('*').order('created_at', { ascending: false }),
+        supabase.from('stock_levels').select('item_name, godown_name, closing_stock'),
+        supabase.from('dispatch_plans').select('order_id, planned_qty').eq('status', 'Canceled')
+      ]);
+ 
+      if (ordersRes.error) throw ordersRes.error;
+      if (stockRes.error) throw stockRes.error;
+      if (cancelRes.error) throw cancelRes.error;
 
-      const response = await fetch(url.toString(), { signal: controller.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const result = await response.json();
+      // 2. Create a quick lookup map for stock
+      // Key: "itemname|godownname" (lowercase + trimmed)
+      const stockMap = {};
+      stockRes.data.forEach(s => {
+        const key = `${String(s.item_name).trim().toLowerCase()}|${String(s.godown_name).trim().toLowerCase()}`;
+        stockMap[key] = s.closing_stock;
+      });
 
-      if (!result.success) throw new Error(result.error || 'Unknown error');
+      // 3. Create lookup for Canceled quantities
+      const cancelMap = {};
+      cancelRes.data.forEach(c => {
+        if (c.order_id) {
+          cancelMap[c.order_id] = (cancelMap[c.order_id] || 0) + (parseFloat(c.planned_qty) || 0);
+        }
+      });
+      
+      console.log('Available Stock Keys in Database:', Object.keys(stockMap));
 
-      let dataArray = result.data;
-      if (!Array.isArray(dataArray)) dataArray = [];
+      // 3. Map orders and inject real-time stock
+      const mappedOrders = ordersRes.data.map((item, idx) => {
+        const orderItemKey = `${String(item.item_name || '').trim().toLowerCase()}|${String(item.godown_name || '').trim().toLowerCase()}`;
+        const realTimeStock = stockMap[orderItemKey] !== undefined ? stockMap[orderItemKey] : '-';
 
-      if (dataArray.length === 0) {
-        setOrders([]);
-        return;
-      }
+        // Help user debug in console
+        if (idx === 0 || (item.item_name && item.item_name.includes('100 No'))) {
+           console.log(`Stock Lookup Debug - Order Item: [${item.item_name}] Godown: [${item.godown_name}] -> Key: [${orderItemKey}] Match Found: ${stockMap[orderItemKey] !== undefined}`);
+        }
 
-      const isArrayData = Array.isArray(dataArray[0]);
-      const dataToMap = dataArray.slice(5);
-
-      let mappedOrders;
-      if (isArrayData) {
-        mappedOrders = dataToMap.map(item => ({
-          orderNumber: item[1] || '-',
-          orderDate: item[2] || '-',
-          clientName: item[3] || '-',
-          godownName: item[4] || '-',
-          itemName: item[5] || '-',
-          rate: item[6] || '0',
-          qty: item[7] || '0',
-          currentStock: item[8] || '-',
-          intransitQty: item[9] || '-',
-          createdBy: item[24] || '-'
-        }));
-      } else {
-        mappedOrders = dataToMap.map(item => ({
-          orderNumber: item.orderNumber || '-',
-          orderDate: item.orderDate || '-',
-          clientName: item.clientName || '-',
-          godownName: item.godownName || '-',
-          itemName: item.itemName || '-',
+        return {
+          id: item.id,
+          orderNumber: item.order_number || '-',
+          orderDate: item.order_date || '-',
+          clientName: item.client_name || '-',
+          godownName: item.godown_name || '-',
+          itemName: item.item_name || '-',
           rate: item.rate || '0',
           qty: item.qty || '0',
-          currentStock: item.currentStock || '-',
-          intransitQty: item.intransitQty || '-',
-          createdBy: item.createdBy || '-'
-        }));
-      }
+          canceledQty: cancelMap[item.id] || 0,
+          currentStock: realTimeStock,
+          intransitQty: item.intransit_qty || '0',
+          createdBy: item.submittedby || '-'
+        };
+      });
 
       setOrders(mappedOrders);
+      
+      // Auto-set next order number in form if empty
+      setFormData(prev => ({
+          ...prev,
+          orderNo: calculateNextOrderNo(mappedOrders)
+      }));
     } catch (error) {
-      if (error.name !== 'AbortError') {
-        console.error('fetchOrdersData error:', error);
-        showToast('Error', 'Failed to load orders: ' + error.message);
-      }
+      console.error('fetchOrdersData error:', error);
+      showToast('Error', 'Failed to load orders: ' + error.message);
     } finally {
-      if (!controller.signal.aborted) {
-        setIsLoadingOrders(false);
-        setIsRefreshingOrders(false);
-        setInitialLoading(false);
-      }
+      setIsLoadingOrders(false);
+      setIsRefreshingOrders(false);
+      setInitialLoading(false);
     }
-  }, [API_URL, SHEET_ID, showToast]);
+  }, [showToast]);
 
-  // --- Fetch master data (clients, godowns, items) ---
+  // --- Fetch master data from Supabase ---
   const fetchMasterData = useCallback(async () => {
-    const url = MASTER_URL?.trim();
-    if (!url) {
-      console.error('MASTER_URL is not defined or empty');
-      return;
-    }
-
     try {
-      const [productsRes, clientsRes, godownsRes] = await Promise.all([
-        fetch(`${url}?sheet=Products`),
-        fetch(`${url}?sheet=Sales Vendor`),
-        fetch(`${url}?sheet=Products&col=4`)
+      const [productsRes, customersRes, godownsRes] = await Promise.all([
+        supabase.from('master_products').select('product_name').order('product_name'),
+        supabase.from('master_customers').select('customer_name').order('customer_name'),
+        supabase.from('master_godowns').select('godown_name').order('godown_name')
       ]);
 
-      const [productsJson, clientsJson, godownsJson] = await Promise.all([
-        productsRes.json(),
-        clientsRes.json(),
-        godownsRes.json()
-      ]);
+      if (productsRes.error) throw productsRes.error;
+      if (customersRes.error) throw customersRes.error;
+      if (godownsRes.error) throw godownsRes.error;
 
-      const processData = (json) => {
-        if (json.success && Array.isArray(json.data)) {
-          if (Array.isArray(json.data[0])) {
-            return json.data.map(row => row[0]).filter(val => val !== null && val !== undefined && val !== '');
-          }
-          return json.data.filter(val => val !== null && val !== undefined && val !== '');
-        }
-        return [];
-      };
-
-      setItemNames(processData(productsJson));
-      setClients(processData(clientsJson));
-      setGodowns(processData(godownsJson));
+      setItemNames(productsRes.data.map(p => p.product_name));
+      setClients(customersRes.data.map(c => c.customer_name));
+      setGodowns(godownsRes.data.map(g => g.godown_name));
     } catch (error) {
       console.error('fetchMasterData error:', error);
       showToast('Error', 'Failed to load master data: ' + error.message);
     }
-  }, [MASTER_URL, showToast]);
+  }, [showToast]);
 
   // --- Initial data loads ---
   useEffect(() => {
     fetchOrdersData();
     fetchMasterData();
-
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
   }, [fetchOrdersData, fetchMasterData]);
 
   // --- Manual refresh ---
@@ -266,54 +254,112 @@ const Order = () => {
     });
   };
 
+  const handleCancelOrder = async (order) => {
+    const cancelQtyStr = window.prompt(`Enter quantity to CANCEL for Order ${order.orderNumber} (Max: ${order.qty}):`, order.qty);
+    if (cancelQtyStr === null) return;
+    
+    const qtyToCancel = parseFloat(cancelQtyStr);
+    if (isNaN(qtyToCancel) || qtyToCancel <= 0) {
+      showToast('Error', 'Please enter a valid quantity');
+      return;
+    }
+
+    if (qtyToCancel > parseFloat(order.qty) + 0.001) {
+      showToast('Error', 'Cannot cancel more than the remaining order quantity');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const now = new Date().toISOString();
+      const { data: plans } = await supabase.from('dispatch_plans').select('dispatch_number');
+      const maxNo = (plans || []).reduce((max, p) => {
+        const n = parseInt(String(p.dispatch_number).replace('DSP', ''), 10);
+        return isNaN(n) ? max : Math.max(max, n);
+      }, 1000);
+      
+      const newDNo = `DSP${maxNo + 1}-CXL`;
+
+      // 1. FIRST: Create the history record in dispatch_plans
+      const { error: insErr } = await supabase.from('dispatch_plans').insert({
+        order_id: order.id,
+        dispatch_number: newDNo,
+        planned_qty: qtyToCancel,
+        planned_date: now.split('T')[0],
+        godown_name: order.godownName || '-',
+        status: 'Canceled',
+        dispatch_completed: true,
+        informed_before_dispatch: true,
+        informed_after_dispatch: true
+      });
+
+      if (insErr) throw insErr;
+
+      // 2. ONLY IF SUCCESSFUL: Permanently REDUCE the qty in the app_orders table
+      const newOrderTotal = (parseFloat(order.qty) || 0) - qtyToCancel;
+      const { error: ordErr } = await supabase
+        .from('app_orders')
+        .update({ qty: newOrderTotal })
+        .eq('id', order.id);
+      
+      if (ordErr) {
+        // Option to handle partial failure log if needed, but for now we throw
+        throw ordErr;
+      }
+
+      showToast('Order quantity canceled and record created successfully', 'success');
+      await fetchOrdersData(true);
+    } catch (err) {
+      console.error(err);
+      showToast('Error', err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (isSubmitting) return;
 
     setIsSubmitting(true);
     try {
-      if (!API_URL || !SHEET_ID) {
-        showToast('Error', 'Missing API URL or Sheet ID');
-        return;
-      }
+      const rowsToInsert = formData.items.map(item => ({
+        order_date: formData.orderDate,
+        client_name: formData.clientName,
+        godown_name: formData.godownName,
+        order_number: formData.orderNo, // Use the generated number
+        item_name: item.itemName,
+        rate: parseFloat(item.rate) || 0,
+        qty: parseInt(item.qty, 10) || 0,
+        submittedby: user?.name || user?.id || 'Unknown'
+      }));
 
-      const payload = {
-        sheet: 'ORDER',
-        sheetId: SHEET_ID,
-        rows: formData.items.map(item => ({
-          orderDate: formData.orderDate,
-          clientName: formData.clientName,
-          godownName: formData.godownName,
-          itemName: item.itemName,
-          rate: item.rate,
-          qty: item.qty,
-          createdBy: user?.name || user?.id || 'Unknown'
-        }))
-      };
+      const { error } = await supabase
+        .from('app_orders')
+        .insert(rowsToInsert);
 
-      // Use POST with mode: 'no-cors' as in original
-      await fetch(API_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
-      });
+      if (error) throw error;
 
       setShowSuccessOverlay(true);
-      setFormData({
+      setFormData(prev => ({
         orderDate: new Date().toISOString().split('T')[0],
         clientName: '',
         godownName: '',
-        items: [{ itemName: '', rate: '', qty: '' }]
-      });
+        items: [{ itemName: '', rate: '', qty: '' }],
+        orderNo: calculateNextOrderNo(orders)
+      }));
       setIsModalOpen(false);
 
       // Refresh orders after successful submission
       await fetchOrdersData(true);
       setTimeout(() => setShowSuccessOverlay(false), 2500);
     } catch (error) {
-      console.error('Submit error:', error);
-      showToast('Error', 'Submission failed');
+      console.error('Submit error details:', error);
+      let errorMsg = error.message || 'Unknown error';
+      if (error.code === '23505') {
+          errorMsg = `Duplicate Order Number: The number "${formData.orderNo}" is already in use. Please use a different number.`;
+      }
+      showToast('Error', errorMsg);
     } finally {
       setIsSubmitting(false);
     }
@@ -530,6 +576,7 @@ const Order = () => {
                   { label: 'Item', key: 'itemName' },
                   { label: 'Rate', key: 'rate', align: 'right' },
                   { label: 'Qty', key: 'qty', align: 'right' },
+                  { label: 'Canceled Qty', key: 'canceledQty', align: 'right' },
                   { label: 'Current Stock', key: 'currentStock', align: 'right' },
                   { label: 'Intransit', key: 'intransitQty', align: 'right' },
                   { label: 'Submitted By', key: 'createdBy', align: 'center' }
@@ -555,7 +602,7 @@ const Order = () => {
                 <TableSkeleton />
               ) : filteredAndSortedOrders.length === 0 ? (
                 <tr>
-                  <td colSpan="10" className="px-6 py-20 text-center">
+                  <td colSpan="11" className="px-6 py-20 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <div className="p-4 bg-gray-50 rounded-full">
                         <Search size={32} className="text-gray-200" />
@@ -577,9 +624,19 @@ const Order = () => {
                     <td className="px-6 py-4 text-gray-800 font-semibold">{order.itemName}</td>
                     <td className="px-6 py-4 font-medium text-right text-slate-500">₹{order.rate}</td>
                     <td className="px-6 py-4 text-right font-black text-primary text-base">{order.qty}</td>
+                    <td className="px-6 py-4 text-right font-black text-red-500 text-sm italic">{order.canceledQty > 0 ? `-${order.canceledQty}` : '0'}</td>
                     <td className="px-6 py-4 text-gray-500 text-[11px] font-bold text-right bg-slate-50/50">{order.currentStock}</td>
                     <td className="px-6 py-4 text-gray-500 text-[11px] font-bold text-right">{order.intransitQty}</td>
                     <td className="px-6 py-4 text-[10px] text-center text-gray-400 font-bold uppercase tracking-tighter italic whitespace-nowrap">{order.createdBy}</td>
+                    <td className="px-6 py-4 text-center">
+                      <button
+                        onClick={() => handleCancelOrder(order)}
+                        className="p-1.5 text-red-100 hover:text-red-600 hover:bg-red-50 rounded transition-all"
+                        title="Cancel Order Quantity"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -619,9 +676,13 @@ const Order = () => {
                     <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-1 leading-none">Rate</p>
                     <p className="font-black text-gray-700">₹{order.rate}</p>
                   </div>
-                  <div>
-                    <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-1 leading-none">Quantity</p>
-                    <p className="font-black text-primary text-sm">{order.qty}</p>
+                  <div className="bg-white p-3 rounded-xl border border-gray-100 flex flex-col items-center">
+                    <p className="text-gray-400 text-[8px] font-black uppercase tracking-tighter mb-1">Order Qty</p>
+                    <p className="font-black text-primary text-lg">{order.qty}</p>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-gray-100 flex flex-col items-center">
+                    <p className="text-red-400 text-[8px] font-black uppercase tracking-tighter mb-1 leading-none">Rejected</p>
+                    <p className="font-black text-red-500 text-lg">{order.canceledQty}</p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between pt-2">
@@ -677,6 +738,17 @@ const Order = () => {
                       value={formData.orderDate}
                       onChange={(e) => setFormData({ ...formData, orderDate: e.target.value })}
                       className="w-full px-3 py-2 bg-white border border-gray-200 rounded focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm transition-all shadow-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-700 uppercase tracking-wide">Order Number</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. VPR/OR-484"
+                      value={formData.orderNo}
+                      onChange={(e) => setFormData({ ...formData, orderNo: e.target.value })}
+                      className="w-full px-3 py-2 bg-white border border-gray-200 rounded focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm transition-all shadow-sm font-bold text-primary"
                     />
                   </div>
                   <div className="space-y-1.5 md:col-span-1">
