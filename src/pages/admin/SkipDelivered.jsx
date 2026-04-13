@@ -158,9 +158,9 @@ const SkipDelivered = () => {
         };
       }).filter(item => item.planningPendingQty > 0.001);
 
-      // Map History Items from completed plans that are NOT yet informed (as requested)
+      // Map History Items from completed plans that were SKIPPED
       const history = (plansRes.data || [])
-        .filter(p => p.dispatch_completed && p.status !== 'Canceled' && !p.informed_before_dispatch && !p.informed_after_dispatch)
+        .filter(p => p.is_skip === true)
         .map((p, idx) => {
           const order = (ordersRes.data || []).find(o => o.id === p.order_id);
           return {
@@ -404,6 +404,7 @@ const SkipDelivered = () => {
             informed_before_dispatch: false,
             informed_after_dispatch: false,
             status: 'Completed',
+            is_skip: true,
             submitted_by: user?.name || 'System',
             completed_at: now,
             informed_at: null

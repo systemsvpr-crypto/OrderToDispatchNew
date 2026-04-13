@@ -544,7 +544,10 @@ const DispatchPlanning = () => {
   const filteredAndSortedHistory = useMemo(() => {
     if (!dispatchHistory) return [];
     const filtered = dispatchHistory.filter(item => {
-      if (item.status === 'Canceled') return false;
+      // Exclude skips (is_skip) and Canceled items from Planning history
+      if (item.is_skip === true || item.status === 'Canceled') return false;
+      // Show both Planned and Completed items that followed the normal planning route
+      if (item.status !== 'Planned' && item.status !== 'Completed') return false;
       const matchesSearch = Object.values(item).some(val =>
         String(val).toLowerCase().includes(searchTerm.toLowerCase())
       );

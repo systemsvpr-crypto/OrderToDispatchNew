@@ -117,10 +117,10 @@ const InformToParty = () => {
                 status: item.status
             }));
 
-            // Pending: Not informed, not completed, and not canceled
-            setPendingItems(allItems.filter(item => !item.informed && !item.dispatchCompleted && item.status !== 'Canceled'));
-            // History: Everything that has been informed, excluding Canceled
-            setHistoryItems(allItems.filter(item => item.informed && item.status !== 'Canceled'));
+            // Pending: Not informed, not completed, not canceled, and NOT a skip
+            setPendingItems(allItems.filter(item => !item.informed && !item.dispatchCompleted && item.status !== 'Canceled' && item.is_skip !== true));
+            // History: Everything that has been informed, excluding Canceled AND excluding skips
+            setHistoryItems(allItems.filter(item => item.informed && item.status !== 'Canceled' && item.is_skip !== true));
 
         } catch (error) {
             console.error('fetchInformData error:', error);

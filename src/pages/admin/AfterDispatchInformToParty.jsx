@@ -83,12 +83,13 @@ const AfterDispatchInformToParty = () => {
         completed: item.dispatch_completed,
         informedAfter: item.informed_after_dispatch,
         informedAt: item.informed_at,
+        is_skip: item.is_skip,
         db_status: item.status,
         status: item.informed_after_dispatch ? 'Informed' : 'Pending'
       }));
 
-      setPendingItems(allMapped.filter(i => i.completed && !i.informedAfter && i.db_status !== 'Canceled'));
-      setHistoryItems(allMapped.filter(i => i.informedAfter && i.db_status !== 'Canceled'));
+      setPendingItems(allMapped.filter(i => i.completed && !i.informedAfter && i.db_status !== 'Canceled' && i.is_skip !== true));
+      setHistoryItems(allMapped.filter(i => i.informedAfter && i.db_status !== 'Canceled' && i.is_skip !== true));
 
     } catch (error) {
       console.error('fetchData error:', error);

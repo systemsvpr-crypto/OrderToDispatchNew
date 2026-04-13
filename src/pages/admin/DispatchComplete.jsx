@@ -117,10 +117,12 @@ const DispatchComplete = () => {
         dispatchQty: item.planned_qty || '0',
         gstIncluded: item.gst_included || 'No',
         crmName: item.order?.submittedby || '-',
+        isSkip: item.is_skip,
         originalIndex: idx
       }));
 
-      setOrders(mapped);
+      // Filter out skips from pending
+      setOrders(mapped.filter(o => o.isSkip !== true));
     } catch (error) {
       console.error('fetchPendingOrders error:', error);
       showToast('Error', 'Failed to load pending dispatches: ' + error.message);
@@ -159,10 +161,13 @@ const DispatchComplete = () => {
         dispatchQty: item.planned_qty || '0',
         crmName: item.order?.submittedby || '-',
         completedAt: item.completed_at,
+        informedBefore: item.informed_before_dispatch,
+        isSkip: item.is_skip,
         status: item.status
       }));
 
-      setHistoryItems(mapped.filter(i => i.status !== 'Canceled'));
+      // Exclude skips from history
+      setHistoryItems(mapped.filter(i => i.status === 'Completed' && i.isSkip !== true));
     } catch (error) {
       console.error('fetchHistory error:', error);
       showToast('Error', 'Failed to load history: ' + error.message);
